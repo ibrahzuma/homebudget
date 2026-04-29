@@ -1,0 +1,57 @@
+{% extends 'budget_app/base.html' %}
+{% block title %}Bill Calendar{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <h2 class="mb-0"><i class="bi bi-calendar3 text-primary"></i> Bill Calendar</h2>
+    <a href="{% url 'recurring_create' %}" class="btn btn-primary"><i class="bi bi-plus-lg"></i> Add Bill</a>
+</div>
+
+<div class="card p-3 mb-3">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <a href="?year={{ prev_month.year }}&month={{ prev_month.month }}" class="btn btn-outline-secondary">
+            <i class="bi bi-chevron-left"></i> {{ prev_month|date:"M Y" }}
+        </a>
+        <div class="text-center">
+            <h4 class="mb-0">{{ month_label }}</h4>
+            <small class="text-muted">Total bills: {{ currency_symbol }}{{ month_total|floatformat:2 }}</small>
+        </div>
+        <a href="?year={{ next_month.year }}&month={{ next_month.month }}" class="btn btn-outline-secondary">
+            {{ next_month|date:"M Y" }} <i class="bi bi-chevron-right"></i>
+        </a>
+    </div>
+</div>
+
+<div class="card p-3">
+    <div class="calendar-grid">
+        <div class="calendar-day-header">Mon</div>
+        <div class="calendar-day-header">Tue</div>
+        <div class="calendar-day-header">Wed</div>
+        <div class="calendar-day-header">Thu</div>
+        <div class="calendar-day-header">Fri</div>
+        <div class="calendar-day-header">Sat</div>
+        <div class="calendar-day-header">Sun</div>
+        {% for week in weeks %}
+            {% for day in week %}
+            <div class="calendar-cell {% if not day.in_month %}out-of-month{% endif %} {% if day.is_today %}today{% endif %}">
+                <div class="calendar-day-num {% if day.is_today %}text-primary{% endif %}">{{ day.date|date:"j" }}</div>
+                {% for bill in day.bills %}
+                    <div class="calendar-bill" title="{{ bill.name }}: {{ currency_symbol }}{{ bill.amount }}">
+                        <i class="bi bi-receipt"></i> {{ bill.name }}: {{ currency_symbol }}{{ bill.amount|floatformat:0 }}
+                    </div>
+                {% endfor %}
+                {% if day.bills %}
+                    <small class="text-muted d-block mt-1">{{ currency_symbol }}{{ day.total|floatformat:0 }}</small>
+                {% endif %}
+            </div>
+            {% endfor %}
+        {% endfor %}
+    </div>
+</div>
+
+<p class="text-muted small mt-3">
+    <i class="bi bi-info-circle"></i> The calendar shows projected dates for active recurring transactions.
+    Add or edit recurring entries from the <a href="{% url 'recurring_list' %}">Recurring Transactions</a> page.
+</p>
+
+{% endblock %}

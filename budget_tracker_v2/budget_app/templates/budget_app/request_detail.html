@@ -1,0 +1,121 @@
+{% extends 'budget_app/base.html' %}
+{% block title %}Money Request{% endblock %}
+{% block content %}
+
+<a href="{% url 'request_list' %}" class="text-decoration-none mb-3 d-inline-block">
+    <i class="bi bi-arrow-left"></i> Back to requests
+</a>
+
+<div class="row g-3">
+    <div class="col-lg-7">
+        <div class="card p-4">
+            <div class="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">
+                <div>
+                    <h3 class="mb-1">{{ money_request.purpose }}</h3>
+                    <small class="text-muted">Request #{{ money_request.pk }} &middot; {{ money_request.created_at|date:"M d, Y H:i" }}</small>
+                </div>
+                <div>
+                    {% if money_request.status == 'pending' %}<span class="badge bg-warning text-dark fs-6">Pending</span>
+                    {% elif money_request.status == 'approved' %}<span class="badge bg-success fs-6">Approved</span>
+                    {% elif money_request.status == 'rejected' %}<span class="badge bg-danger fs-6">Rejected</span>
+                    {% else %}<span class="badge bg-secondary fs-6">Cancelled</span>{% endif %}
+                </div>
+            </div>
+
+            <div class="row g-3 mb-3">
+                <div class="col-sm-6">
+                    <small class="text-muted d-block">Requester</small>
+                    <strong><i class="bi bi-person-circle"></i> {{ money_request.requester.username }}</strong>
+                </div>
+                <div class="col-sm-6">
+                    <small class="text-muted d-block">Approver</small>
+                    <strong><i class="bi bi-person-circle"></i> {{ money_request.approver.username }}</strong>
+                </div>
+                <div class="col-sm-6">
+                    <small class="text-muted d-block">Amount</small>
+                    <strong class="fs-4">{{ money_request.currency.symbol|default:currency_symbol }}{{ money_request.amount|floatformat:2 }}</strong>
+                </div>
+                <div class="col-sm-6">
+                    <small class="text-muted d-block">Category</small>
+                    {% if money_request.category %}
+                        <span class="badge" style="background-color:{{ money_request.category.color }}">{{ money_request.category.name }}</span>
+                    {% else %}<span class="text-muted">—</span>{% endif %}
+                </div>
+            </div>
+
+            {% if money_request.notes %}
+            <div class="mb-3">
+                <small class="text-muted d-block">Notes from requester</small>
+                <p class="mb-0">{{ money_request.notes|linebreaks }}</p>
+            </div>
+            {% endif %}
+
+            {% if money_request.response_note %}
+            <div class="alert alert-secondary">
+                <small class="text-muted d-block">Response note</small>
+                {{ money_request.response_note|linebreaks }}
+            </div>
+            {% endif %}
+
+            {% if money_request.status == 'approved' %}
+            <hr>
+            <h6 class="mb-3"><i class="bi bi-check-circle text-success"></i> Linked Transactions</h6>
+            <ul class="list-unstyled mb-0 small">
+                {% if money_request.income_transaction %}
+                <li class="mb-1"><span class="badge badge-income">Income</span> Recorded for {{ money_request.requester.username }}: +{{ currency_symbol }}{{ money_request.income_transaction.amount|floatformat:2 }}</li>
+                {% endif %}
+                {% if money_request.expense_transaction %}
+                <li><span class="badge badge-expense">Expense</span> Recorded for {{ money_request.approver.username }}: -{{ currency_symbol }}{{ money_request.expense_transaction.amount|floatformat:2 }}</li>
+                {% endif %}
+            </ul>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="col-lg-5">
+        {% if can_respond %}
+        <div class="card p-4">
+            <h5 class="mb-3"><i class="bi bi-shield-check"></i> Your Decision</h5>
+            <p class="text-muted small">If you approve, an expense will be recorded under your account and an income entry will be created for {{ money_request.requester.username }}.</p>
+            <form method="post">
+                {% csrf_token %}
+                <div class="mb-3">
+                    <label class="form-label">Note (optional)</label>
+                    {{ response_form.response_note }}
+                </div>
+                <div class="d-grid gap-2">
+                    <button type="submit" name="action" value="approve" class="btn btn-success"
+                            onclick="return confirm('Approve this request? Transactions will be created.')">
+                        <i class="bi bi-check-circle"></i> Approve
+                    </button>
+                    <button type="submit" name="action" value="reject" class="btn btn-outline-danger"
+                            onclick="return confirm('Reject this request?')">
+                        <i class="bi bi-x-circle"></i> Reject
+                    </button>
+                </div>
+            </form>
+        </div>
+        {% elif can_cancel %}
+        <div class="card p-4">
+            <h5 class="mb-3">Manage Request</h5>
+            <p class="text-muted small">You can cancel this request while it's pending.</p>
+            <form method="post">
+                {% csrf_token %}
+                <button type="submit" name="action" value="cancel" class="btn btn-outline-secondary w-100"
+                        onclick="return confirm('Cancel this request?')">
+                    <i class="bi bi-x"></i> Cancel Request
+                </button>
+            </form>
+        </div>
+        {% else %}
+        <div class="card p-4 text-center text-muted">
+            <i class="bi bi-info-circle fs-3 mb-2"></i>
+            <p class="mb-0">This request has been resolved. No further actions.</p>
+            {% if money_request.resolved_at %}
+            <small class="text-muted">Resolved on {{ money_request.resolved_at|date:"M d, Y H:i" }}</small>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

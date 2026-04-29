@@ -1,0 +1,57 @@
+{% extends 'budget_app/base.html' %}
+{% block title %}Import / Export{% endblock %}
+{% block content %}
+
+<h2 class="mb-4"><i class="bi bi-cloud-arrow-up text-primary"></i> Import / Export Data</h2>
+
+<div class="row g-3">
+    <div class="col-lg-6">
+        <div class="card p-4 h-100">
+            <h5 class="mb-3"><i class="bi bi-download"></i> Export Transactions</h5>
+            <p class="text-muted">Download all your transactions as a CSV file for spreadsheets, tax preparation, or backup.</p>
+            <a href="{% url 'export_csv' %}" class="btn btn-success"><i class="bi bi-file-earmark-spreadsheet"></i> Download CSV</a>
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="card p-4 h-100">
+            <h5 class="mb-3"><i class="bi bi-upload"></i> Import from CSV</h5>
+            <p class="text-muted small">Upload a CSV with these columns: <code>date, type, amount, currency, category, description, payee</code>.</p>
+            <form method="post" enctype="multipart/form-data">
+                {% csrf_token %}
+                {% for field in form %}
+                <div class="mb-3">
+                    <label class="form-label">{{ field.label }}</label>
+                    {{ field }}
+                    {% if field.help_text %}<small class="text-muted d-block">{{ field.help_text }}</small>{% endif %}
+                    {% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
+                </div>
+                {% endfor %}
+                <button type="submit" class="btn btn-primary"><i class="bi bi-cloud-upload"></i> Import</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% if result %}
+<div class="card p-4 mt-3">
+    <h5>Import Result</h5>
+    <p class="text-success mb-2"><i class="bi bi-check-circle"></i> Created <strong>{{ result.created }}</strong> transaction(s).</p>
+    {% if result.errors %}
+    <p class="text-danger mb-1"><i class="bi bi-exclamation-triangle"></i> {{ result.errors|length }} error(s):</p>
+    <ul class="small">
+        {% for err in result.errors %}<li>{{ err }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+</div>
+{% endif %}
+
+<div class="card p-4 mt-3 bg-light">
+    <h6><i class="bi bi-info-circle"></i> CSV Format Example</h6>
+    <pre class="mb-0 small">date,type,amount,currency,category,description,payee
+2025-04-15,expense,45.50,USD,Groceries,Weekly shop,Supermarket
+2025-04-15,income,3000.00,USD,Salary,April salary,Employer
+2025-04-16,expense,80.00,USD,Fuel,Filled tank,TotalEnergies</pre>
+    <small class="text-muted mt-2 d-block">Date format: <code>YYYY-MM-DD</code> or <code>MM/DD/YYYY</code>. Type must be <code>income</code> or <code>expense</code>. Categories are auto-created if not found.</small>
+</div>
+{% endblock %}

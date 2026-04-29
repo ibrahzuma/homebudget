@@ -1,0 +1,73 @@
+{% extends 'budget_app/base.html' %}
+{% block title %}Currencies{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <div>
+        <h2 class="mb-0"><i class="bi bi-currency-exchange text-primary"></i> Currencies & Exchange Rates</h2>
+        <small class="text-muted">Multi-currency support for international travel, freelance, and investments.</small>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{% url 'rate_create' %}" class="btn btn-outline-primary"><i class="bi bi-arrow-left-right"></i> Set Rate</a>
+        <a href="{% url 'currency_create' %}" class="btn btn-primary"><i class="bi bi-plus-lg"></i> Add Currency</a>
+    </div>
+</div>
+
+<div class="row g-3">
+    <div class="col-lg-6">
+        <div class="card p-4">
+            <h5 class="mb-3">Available Currencies</h5>
+            <div class="table-responsive">
+                <table class="table mb-0">
+                    <thead>
+                        <tr><th>Code</th><th>Name</th><th>Symbol</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for c in currencies %}
+                        <tr>
+                            <td><strong>{{ c.code }}</strong>
+                                {% if current_household.base_currency_id == c.id %}<span class="badge bg-primary ms-1">Base</span>{% endif %}
+                            </td>
+                            <td>{{ c.name }}</td>
+                            <td>{{ c.symbol }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="card p-4">
+            <h5 class="mb-3">Exchange Rates</h5>
+            <p class="text-muted small">Used to convert all transactions, assets, and liabilities into your base currency.</p>
+            <div class="table-responsive">
+                <table class="table mb-0">
+                    <thead>
+                        <tr><th>From</th><th></th><th>To</th><th class="text-end">Rate</th><th>Updated</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for r in rates %}
+                        <tr>
+                            <td><strong>1 {{ r.from_currency.code }}</strong></td>
+                            <td><i class="bi bi-arrow-right"></i></td>
+                            <td>{{ r.to_currency.code }}</td>
+                            <td class="text-end">{{ r.rate|floatformat:4 }}</td>
+                            <td><small class="text-muted">{{ r.updated_at|date:"M d, Y" }}</small></td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="5" class="text-center text-muted py-3">No exchange rates set yet.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="alert alert-info mt-3">
+    <i class="bi bi-lightbulb"></i> <strong>Tip:</strong> Set a rate from any foreign currency to your base currency
+    so transactions in that currency will automatically be converted for totals and charts.
+</div>
+{% endblock %}

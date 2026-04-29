@@ -1,0 +1,51 @@
+{% extends 'budget_app/base.html' %}
+{% block title %}Budgets{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-wallet2 text-primary"></i> Monthly Budgets</h2>
+    <a href="{% url 'budget_create' %}" class="btn btn-primary"><i class="bi bi-plus-lg"></i> Set Budget</a>
+</div>
+
+<div class="card">
+    <div class="table-responsive">
+        <table class="table mb-0">
+            <thead>
+                <tr>
+                    <th>Month</th>
+                    <th>Category</th>
+                    <th class="text-end">Limit</th>
+                    <th>Progress (current month only)</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in rows %}
+                <tr>
+                    <td>{{ r.budget.month|date:"F Y" }}</td>
+                    <td><span class="badge" style="background-color:{{ r.budget.category.color }}">{{ r.budget.category.name }}</span></td>
+                    <td class="text-end fw-bold">{{ currency_symbol }}{{ r.budget.monthly_limit|floatformat:2 }}</td>
+                    <td>
+                        {% if r.is_current %}
+                            <div class="d-flex align-items-center gap-2">
+                                <div class="progress flex-grow-1" style="height: 8px;">
+                                    <div class="progress-bar {% if r.over %}bg-danger{% elif r.pct > 75 %}bg-warning{% else %}bg-success{% endif %}"
+                                         style="width: {{ r.pct }}%"></div>
+                                </div>
+                                <small>{{ currency_symbol }}{{ r.spent|floatformat:0 }}</small>
+                            </div>
+                        {% else %}
+                            <small class="text-muted">—</small>
+                        {% endif %}
+                    </td>
+                    <td class="text-end">
+                        <a href="{% url 'budget_delete' r.budget.pk %}" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="5" class="text-center text-muted py-4">No budgets set yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

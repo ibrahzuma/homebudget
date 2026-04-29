@@ -1,0 +1,343 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Home Budget Tracker{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        :root {
+            --sidebar-width: 250px;
+            --sidebar-bg: #1e293b;
+            --sidebar-hover: #334155;
+            --sidebar-active: #3b82f6;
+            --sidebar-text: #cbd5e1;
+            --sidebar-text-active: #ffffff;
+            --content-bg: #f5f7fb;
+        }
+
+        body {
+            background-color: var(--content-bg);
+            min-height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: var(--sidebar-width);
+            height: 100vh;
+            background-color: var(--sidebar-bg);
+            color: var(--sidebar-text);
+            overflow-y: auto;
+            z-index: 1000;
+            transition: transform 0.3s ease;
+        }
+
+        .sidebar-brand {
+            padding: 1.25rem 1.5rem;
+            color: white;
+            font-size: 1.15rem;
+            font-weight: 600;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .sidebar-section {
+            padding: 0.75rem 1.5rem 0.25rem;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            color: #64748b;
+            letter-spacing: 0.05em;
+            font-weight: 600;
+        }
+
+        .sidebar-link {
+            display: flex;
+            align-items: center;
+            padding: 0.6rem 1.5rem;
+            color: var(--sidebar-text);
+            text-decoration: none;
+            transition: all 0.15s;
+            font-size: 0.9rem;
+            border-left: 3px solid transparent;
+        }
+
+        .sidebar-link:hover {
+            background-color: var(--sidebar-hover);
+            color: white;
+        }
+
+        .sidebar-link.active {
+            background-color: var(--sidebar-hover);
+            color: white;
+            border-left-color: var(--sidebar-active);
+        }
+
+        .sidebar-link i {
+            margin-right: 0.75rem;
+            width: 1.1rem;
+            font-size: 1rem;
+        }
+
+        .sidebar-link .badge {
+            margin-left: auto;
+            font-size: 0.7rem;
+        }
+
+        .sidebar-user {
+            padding: 1rem 1.5rem;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            margin-top: auto;
+        }
+
+        /* Main content */
+        .main-content {
+            margin-left: var(--sidebar-width);
+            min-height: 100vh;
+            padding: 1.5rem 2rem 3rem;
+        }
+
+        .topbar {
+            background: white;
+            padding: 0.75rem 1.25rem;
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .sidebar-toggle {
+            display: none;
+            border: none;
+            background: transparent;
+            font-size: 1.3rem;
+            color: #475569;
+        }
+
+        /* Cards */
+        .card {
+            border: none;
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        .stat-card { border: none; border-radius: 12px; }
+        .stat-card .stat-value { font-size: 1.6rem; font-weight: 600; }
+        .stat-icon {
+            width: 44px; height: 44px; border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.3rem;
+        }
+
+        .table > :not(caption) > * > * { padding: 0.85rem 0.75rem; }
+        .badge-income { background-color: #d1f7e7; color: #0a6b4b; }
+        .badge-expense { background-color: #fde2e4; color: #a32b3a; }
+        .progress { height: 8px; border-radius: 4px; }
+
+        /* Calendar */
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 4px;
+        }
+        .calendar-day-header {
+            text-align: center;
+            font-weight: 600;
+            font-size: 0.8rem;
+            color: #64748b;
+            padding: 0.5rem;
+            text-transform: uppercase;
+        }
+        .calendar-cell {
+            background: white;
+            border-radius: 8px;
+            padding: 0.5rem;
+            min-height: 90px;
+            border: 1px solid #e2e8f0;
+            font-size: 0.85rem;
+        }
+        .calendar-cell.out-of-month { background: #f8fafc; opacity: 0.5; }
+        .calendar-cell.today { border-color: #3b82f6; border-width: 2px; }
+        .calendar-day-num { font-weight: 600; margin-bottom: 0.25rem; }
+        .calendar-bill {
+            background: #fef3c7;
+            color: #92400e;
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-size: 0.7rem;
+            margin-bottom: 2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* Mobile */
+        @media (max-width: 991px) {
+            .sidebar {
+                transform: translateX(-100%);
+            }
+            .sidebar.show {
+                transform: translateX(0);
+            }
+            .main-content {
+                margin-left: 0;
+                padding: 1rem;
+            }
+            .sidebar-toggle {
+                display: inline-block;
+            }
+            .sidebar-overlay {
+                position: fixed; inset: 0;
+                background: rgba(0,0,0,0.5);
+                z-index: 999;
+                display: none;
+            }
+            .sidebar-overlay.show { display: block; }
+        }
+    </style>
+</head>
+<body>
+
+{% if user.is_authenticated and current_household %}
+<aside class="sidebar d-flex flex-column" id="sidebar">
+    <a href="{% url 'dashboard' %}" class="sidebar-brand text-decoration-none">
+        <i class="bi bi-piggy-bank-fill"></i> Home Budget
+    </a>
+
+    <nav class="flex-grow-1 py-2">
+        <div class="sidebar-section">Overview</div>
+        <a href="{% url 'dashboard' %}" class="sidebar-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}">
+            <i class="bi bi-speedometer2"></i> Dashboard
+        </a>
+        <a href="{% url 'forecast' %}" class="sidebar-link {% if request.resolver_match.url_name == 'forecast' %}active{% endif %}">
+            <i class="bi bi-graph-up-arrow"></i> Forecast
+        </a>
+        <a href="{% url 'networth' %}" class="sidebar-link {% if request.resolver_match.url_name == 'networth' %}active{% endif %}">
+            <i class="bi bi-bank"></i> Net Worth
+        </a>
+
+        <div class="sidebar-section">Money</div>
+        <a href="{% url 'transaction_list' %}" class="sidebar-link {% if 'transaction' in request.resolver_match.url_name %}active{% endif %}">
+            <i class="bi bi-list-ul"></i> Transactions
+        </a>
+        <a href="{% url 'recurring_list' %}" class="sidebar-link {% if 'recurring' in request.resolver_match.url_name %}active{% endif %}">
+            <i class="bi bi-arrow-repeat"></i> Recurring
+        </a>
+        <a href="{% url 'bill_calendar' %}" class="sidebar-link {% if request.resolver_match.url_name == 'bill_calendar' %}active{% endif %}">
+            <i class="bi bi-calendar3"></i> Bill Calendar
+        </a>
+        <a href="{% url 'budget_list' %}" class="sidebar-link {% if 'budget' in request.resolver_match.url_name %}active{% endif %}">
+            <i class="bi bi-wallet2"></i> Budgets
+        </a>
+
+        <div class="sidebar-section">Smart Tools</div>
+        <a href="{% url 'rule_list' %}" class="sidebar-link {% if 'rule' in request.resolver_match.url_name %}active{% endif %}">
+            <i class="bi bi-magic"></i> Auto-Categorize
+        </a>
+        <a href="{% url 'alert_list' %}" class="sidebar-link {% if 'alert' in request.resolver_match.url_name %}active{% endif %}">
+            <i class="bi bi-bell"></i> Alerts
+            {% if unread_alerts_count %}<span class="badge bg-danger">{{ unread_alerts_count }}</span>{% endif %}
+        </a>
+        <a href="{% url 'request_list' %}" class="sidebar-link {% if 'request' in request.resolver_match.url_name %}active{% endif %}">
+            <i class="bi bi-cash-stack"></i> Money Requests
+            {% if pending_requests_count %}<span class="badge bg-warning text-dark">{{ pending_requests_count }}</span>{% endif %}
+        </a>
+
+        <div class="sidebar-section">Settings</div>
+        <a href="{% url 'category_list' %}" class="sidebar-link {% if 'category' in request.resolver_match.url_name %}active{% endif %}">
+            <i class="bi bi-tags"></i> Categories
+        </a>
+        <a href="{% url 'currency_list' %}" class="sidebar-link {% if 'currency' in request.resolver_match.url_name or 'rate' in request.resolver_match.url_name %}active{% endif %}">
+            <i class="bi bi-currency-exchange"></i> Currencies
+        </a>
+        <a href="{% url 'household_settings' %}" class="sidebar-link {% if 'household' in request.resolver_match.url_name %}active{% endif %}">
+            <i class="bi bi-people"></i> Household
+        </a>
+        <a href="{% url 'import_csv' %}" class="sidebar-link {% if request.resolver_match.url_name == 'import_csv' %}active{% endif %}">
+            <i class="bi bi-cloud-arrow-up"></i> Import / Export
+        </a>
+    </nav>
+
+    <div class="sidebar-user">
+        <div class="d-flex align-items-center">
+            <div class="me-2">
+                <i class="bi bi-person-circle fs-4"></i>
+            </div>
+            <div class="flex-grow-1">
+                <div class="text-white small">{{ user.username }}</div>
+                <div class="small text-secondary">{{ current_household.name }}</div>
+            </div>
+            <form method="post" action="{% url 'logout' %}">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-sm btn-outline-light" title="Logout">
+                    <i class="bi bi-box-arrow-right"></i>
+                </button>
+            </form>
+        </div>
+    </div>
+</aside>
+
+<div class="sidebar-overlay" id="sidebarOverlay"></div>
+{% endif %}
+
+<main class="main-content">
+    {% if user.is_authenticated and current_household %}
+    <div class="topbar">
+        <button class="sidebar-toggle" id="sidebarToggle"><i class="bi bi-list"></i></button>
+        <div class="d-flex align-items-center gap-3">
+            <a href="{% url 'transaction_create' %}" class="btn btn-primary btn-sm">
+                <i class="bi bi-plus-lg"></i> Add Transaction
+            </a>
+            <a href="{% url 'request_create' %}" class="btn btn-outline-primary btn-sm d-none d-md-inline-block">
+                <i class="bi bi-send"></i> Request Money
+            </a>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <a href="{% url 'alert_list' %}" class="btn btn-light position-relative" title="Alerts">
+                <i class="bi bi-bell"></i>
+                {% if unread_alerts_count %}
+                <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">{{ unread_alerts_count }}</span>
+                {% endif %}
+            </a>
+            <span class="text-muted small d-none d-md-inline">{{ currency_code }}</span>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if messages %}
+        {% for message in messages %}
+            <div class="alert alert-{{ message.tags|default:'info' }} alert-dismissible fade show">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        {% endfor %}
+    {% endif %}
+
+    {% block content %}{% endblock %}
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    const toggle = document.getElementById('sidebarToggle');
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebarOverlay');
+    if (toggle && sidebar) {
+        toggle.addEventListener('click', () => {
+            sidebar.classList.toggle('show');
+            if (overlay) overlay.classList.toggle('show');
+        });
+    }
+    if (overlay) {
+        overlay.addEventListener('click', () => {
+            sidebar.classList.remove('show');
+            overlay.classList.remove('show');
+        });
+    }
+</script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>

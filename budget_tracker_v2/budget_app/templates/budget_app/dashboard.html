@@ -1,0 +1,255 @@
+{% extends 'budget_app/base.html' %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <div>
+        <h2 class="mb-1">Dashboard</h2>
+        <p class="text-muted mb-0">{{ household.name }} &middot; {{ month_label }}</p>
+    </div>
+</div>
+
+<!-- Pending approvals banner -->
+{% if pending_my_approvals %}
+<div class="alert alert-warning d-flex align-items-center justify-content-between">
+    <div>
+        <i class="bi bi-exclamation-triangle"></i>
+        You have <strong>{{ pending_my_approvals.count }}</strong> money request(s) waiting for your approval.
+    </div>
+    <a href="{% url 'request_list' %}" class="btn btn-sm btn-warning">Review</a>
+</div>
+{% endif %}
+
+<!-- Summary cards -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3 col-sm-6">
+        <div class="card stat-card p-3">
+            <div class="d-flex align-items-center">
+                <div class="stat-icon bg-success bg-opacity-10 text-success me-3">
+                    <i class="bi bi-arrow-down-circle"></i>
+                </div>
+                <div>
+                    <small class="text-muted">Income</small>
+                    <div class="stat-value text-success">{{ currency_symbol }}{{ total_income|floatformat:2 }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3 col-sm-6">
+        <div class="card stat-card p-3">
+            <div class="d-flex align-items-center">
+                <div class="stat-icon bg-danger bg-opacity-10 text-danger me-3">
+                    <i class="bi bi-arrow-up-circle"></i>
+                </div>
+                <div>
+                    <small class="text-muted">Expenses</small>
+                    <div class="stat-value text-danger">{{ currency_symbol }}{{ total_expense|floatformat:2 }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3 col-sm-6">
+        <div class="card stat-card p-3">
+            <div class="d-flex align-items-center">
+                <div class="stat-icon bg-primary bg-opacity-10 text-primary me-3">
+                    <i class="bi bi-wallet2"></i>
+                </div>
+                <div>
+                    <small class="text-muted">Balance</small>
+                    <div class="stat-value {% if balance < 0 %}text-danger{% else %}text-primary{% endif %}">
+                        {{ currency_symbol }}{{ balance|floatformat:2 }}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3 col-sm-6">
+        <div class="card stat-card p-3">
+            <div class="d-flex align-items-center">
+                <div class="stat-icon bg-info bg-opacity-10 text-info me-3">
+                    <i class="bi bi-bank"></i>
+                </div>
+                <div>
+                    <small class="text-muted">Net Worth</small>
+                    <div class="stat-value {% if networth.net_worth < 0 %}text-danger{% else %}text-info{% endif %}">
+                        {{ currency_symbol }}{{ networth.net_worth|floatformat:2 }}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Forecast card -->
+<div class="card p-4 mb-4">
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+        <div>
+            <h5 class="mb-1"><i class="bi bi-graph-up-arrow text-primary"></i> End-of-Month Forecast</h5>
+            <small class="text-muted">Based on your spending rate and upcoming recurring bills</small>
+        </div>
+        <a href="{% url 'forecast' %}" class="small">Details &rarr;</a>
+    </div>
+    <div class="row g-3">
+        <div class="col-md-3 col-6">
+            <small class="text-muted d-block">Days remaining</small>
+            <strong>{{ forecast.days_remaining }} / {{ forecast.days_total }}</strong>
+        </div>
+        <div class="col-md-3 col-6">
+            <small class="text-muted d-block">Daily burn rate</small>
+            <strong class="text-danger">{{ currency_symbol }}{{ forecast.daily_burn|floatformat:2 }}</strong>
+        </div>
+        <div class="col-md-3 col-6">
+            <small class="text-muted d-block">Projected expenses</small>
+            <strong>{{ currency_symbol }}{{ forecast.projected_expense|floatformat:2 }}</strong>
+        </div>
+        <div class="col-md-3 col-6">
+            <small class="text-muted d-block">Projected balance</small>
+            <strong class="{% if forecast.projected_balance < 0 %}text-danger{% else %}text-success{% endif %}">
+                {{ currency_symbol }}{{ forecast.projected_balance|floatformat:2 }}
+            </strong>
+        </div>
+    </div>
+</div>
+
+<!-- Member breakdown + chart -->
+<div class="row g-3 mb-4">
+    <div class="col-lg-6">
+        <div class="card p-4">
+            <h5 class="mb-3"><i class="bi bi-people"></i> By Member</h5>
+            <div class="table-responsive">
+                <table class="table mb-0">
+                    <thead>
+                        <tr>
+                            <th>Member</th>
+                            <th class="text-end">Income</th>
+                            <th class="text-end">Expense</th>
+                            <th class="text-end">Net</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for m in members_data %}
+                        <tr>
+                            <td><i class="bi bi-person-circle"></i> {{ m.user.username }}</td>
+                            <td class="text-end text-success">{{ currency_symbol }}{{ m.income|floatformat:2 }}</td>
+                            <td class="text-end text-danger">{{ currency_symbol }}{{ m.expense|floatformat:2 }}</td>
+                            <td class="text-end fw-bold {% if m.net < 0 %}text-danger{% endif %}">{{ currency_symbol }}{{ m.net|floatformat:2 }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="card p-4">
+            <h5 class="mb-3"><i class="bi bi-pie-chart"></i> Spending by Category</h5>
+            {% if category_breakdown %}
+                <canvas id="categoryChart" height="220"></canvas>
+            {% else %}
+                <p class="text-muted text-center my-4">No expenses yet this month.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Budgets, upcoming, recent -->
+<div class="row g-3">
+    <div class="col-lg-4">
+        <div class="card p-4 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="mb-0"><i class="bi bi-bullseye"></i> Budget Progress</h5>
+                <a href="{% url 'budget_list' %}" class="small">Manage</a>
+            </div>
+            {% for bp in budget_progress %}
+            <div class="mb-3">
+                <div class="d-flex justify-content-between mb-1">
+                    <span><span class="badge" style="background-color: {{ bp.category.color }}">&nbsp;</span> {{ bp.category.name }}</span>
+                    <small>{{ currency_symbol }}{{ bp.spent|floatformat:0 }} / {{ currency_symbol }}{{ bp.limit|floatformat:0 }}</small>
+                </div>
+                <div class="progress">
+                    <div class="progress-bar {% if bp.over %}bg-danger{% elif bp.pct > 75 %}bg-warning{% else %}bg-success{% endif %}"
+                         style="width: {{ bp.pct }}%"></div>
+                </div>
+            </div>
+            {% empty %}
+            <p class="text-muted small">No budgets. <a href="{% url 'budget_create' %}">Create one</a>.</p>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="col-lg-4">
+        <div class="card p-4 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="mb-0"><i class="bi bi-calendar3"></i> Upcoming Bills</h5>
+                <a href="{% url 'bill_calendar' %}" class="small">Calendar</a>
+            </div>
+            {% for r in upcoming %}
+            <div class="d-flex justify-content-between align-items-center py-2 border-bottom">
+                <div>
+                    <strong>{{ r.name }}</strong>
+                    <div class="small text-muted">
+                        {{ r.next_due_date|date:"M d" }}
+                        {% if r.days_until_due == 0 %}<span class="badge bg-danger ms-1">Today</span>
+                        {% elif r.days_until_due == 1 %}<span class="badge bg-warning text-dark ms-1">Tomorrow</span>
+                        {% else %}<span class="text-muted ms-1">in {{ r.days_until_due }}d</span>{% endif %}
+                    </div>
+                </div>
+                <span class="fw-bold {% if r.transaction_type == 'income' %}text-success{% else %}text-danger{% endif %}">
+                    {{ currency_symbol }}{{ r.amount|floatformat:0 }}
+                </span>
+            </div>
+            {% empty %}
+            <p class="text-muted small">Nothing due in the next 7 days.</p>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="col-lg-4">
+        <div class="card p-4 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="mb-0"><i class="bi bi-clock-history"></i> Recent Activity</h5>
+                <a href="{% url 'transaction_list' %}" class="small">All</a>
+            </div>
+            {% for t in recent %}
+            <div class="d-flex justify-content-between align-items-center py-2 border-bottom">
+                <div class="text-truncate" style="max-width: 65%;">
+                    <strong class="text-truncate d-block">{{ t.description|default:t.payee|default:t.category.name|default:"—" }}</strong>
+                    <div class="small text-muted">
+                        {{ t.user.username }} &middot; {{ t.date|date:"M d" }}
+                    </div>
+                </div>
+                <span class="{% if t.transaction_type == 'income' %}text-success{% else %}text-danger{% endif %} fw-bold small">
+                    {% if t.transaction_type == 'income' %}+{% else %}-{% endif %}{{ currency_symbol }}{{ t.amount|floatformat:2 }}
+                </span>
+            </div>
+            {% empty %}
+            <p class="text-muted small">No transactions yet.</p>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+{% if category_breakdown %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+    const ctx = document.getElementById('categoryChart');
+    new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: [{% for c in category_breakdown %}'{{ c.category__name|escapejs }}'{% if not forloop.last %},{% endif %}{% endfor %}],
+            datasets: [{
+                data: [{% for c in category_breakdown %}{{ c.total }}{% if not forloop.last %},{% endif %}{% endfor %}],
+                backgroundColor: [{% for c in category_breakdown %}'{{ c.category__color }}'{% if not forloop.last %},{% endif %}{% endfor %}],
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { position: 'bottom' } }
+        }
+    });
+</script>
+{% endif %}
+{% endblock %}

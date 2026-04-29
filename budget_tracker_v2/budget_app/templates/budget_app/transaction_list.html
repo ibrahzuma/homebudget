@@ -1,0 +1,102 @@
+{% extends 'budget_app/base.html' %}
+{% block title %}Transactions{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <h2 class="mb-0"><i class="bi bi-list-ul text-primary"></i> Transactions</h2>
+    <div class="d-flex gap-2">
+        <a href="{% url 'export_csv' %}" class="btn btn-outline-secondary"><i class="bi bi-download"></i> Export</a>
+        <a href="{% url 'transaction_create' %}" class="btn btn-primary"><i class="bi bi-plus-lg"></i> Add</a>
+    </div>
+</div>
+
+<div class="card p-3 mb-3">
+    <form method="get" class="row g-2 align-items-end">
+        <div class="col-md-3">
+            <label class="form-label small">Search</label>
+            <input type="text" name="q" value="{{ q }}" class="form-control" placeholder="Description or payee">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small">Type</label>
+            <select name="type" class="form-select">
+                <option value="">All</option>
+                <option value="income" {% if current_type == 'income' %}selected{% endif %}>Income</option>
+                <option value="expense" {% if current_type == 'expense' %}selected{% endif %}>Expense</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small">Member</label>
+            <select name="member" class="form-select">
+                <option value="">All members</option>
+                {% for m in household.members.all %}
+                <option value="{{ m.id }}" {% if current_member == m.id|stringformat:"s" %}selected{% endif %}>{{ m.username }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small">Category</label>
+            <select name="category" class="form-select">
+                <option value="">All</option>
+                {% for c in household.categories.all %}
+                <option value="{{ c.id }}" {% if current_category == c.id|stringformat:"s" %}selected{% endif %}>{{ c.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-outline-primary w-100"><i class="bi bi-funnel"></i> Filter</button>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Type</th>
+                    <th>Category</th>
+                    <th>Payee / Description</th>
+                    <th>Member</th>
+                    <th class="text-end">Amount</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for t in transactions %}
+                <tr>
+                    <td><small>{{ t.date|date:"M d, Y" }}</small></td>
+                    <td>
+                        {% if t.transaction_type == 'income' %}
+                            <span class="badge badge-income">Income</span>
+                        {% else %}
+                            <span class="badge badge-expense">Expense</span>
+                        {% endif %}
+                        {% if t.source != 'manual' %}<small class="text-muted ms-1"><i class="bi bi-info-circle" title="{{ t.get_source_display }}"></i></small>{% endif %}
+                    </td>
+                    <td>
+                        {% if t.category %}
+                        <span class="badge" style="background-color: {{ t.category.color }}"><i class="bi {{ t.category.icon }}"></i> {{ t.category.name }}</span>
+                        {% else %}<span class="text-muted">—</span>{% endif %}
+                    </td>
+                    <td>
+                        {% if t.payee %}<strong>{{ t.payee }}</strong><br>{% endif %}
+                        <small>{{ t.description|default:"" }}</small>
+                    </td>
+                    <td><small><i class="bi bi-person-circle"></i> {{ t.user.username }}</small></td>
+                    <td class="text-end fw-bold {% if t.transaction_type == 'income' %}text-success{% else %}text-danger{% endif %}">
+                        {% if t.transaction_type == 'income' %}+{% else %}-{% endif %}{{ t.currency.symbol|default:currency_symbol }}{{ t.amount|floatformat:2 }}
+                    </td>
+                    <td class="text-end">
+                        <a href="{% url 'transaction_edit' t.pk %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-pencil"></i></a>
+                        <a href="{% url 'transaction_delete' t.pk %}" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="7" class="text-center text-muted py-4">No transactions found.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

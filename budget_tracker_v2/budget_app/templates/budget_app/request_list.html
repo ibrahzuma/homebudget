@@ -1,0 +1,109 @@
+{% extends 'budget_app/base.html' %}
+{% block title %}Money Requests{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <div>
+        <h2 class="mb-0"><i class="bi bi-cash-stack text-primary"></i> Money Requests</h2>
+        <small class="text-muted">Request money from a household member; they can approve or reject.</small>
+    </div>
+    <a href="{% url 'request_create' %}" class="btn btn-primary"><i class="bi bi-send"></i> New Request</a>
+</div>
+
+<ul class="nav nav-tabs mb-3" role="tablist">
+    <li class="nav-item">
+        <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#incoming">
+            <i class="bi bi-inbox"></i> Incoming
+            {% if incoming %}<span class="badge bg-secondary ms-1">{{ incoming|length }}</span>{% endif %}
+        </button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#outgoing">
+            <i class="bi bi-send"></i> Outgoing
+            {% if outgoing %}<span class="badge bg-secondary ms-1">{{ outgoing|length }}</span>{% endif %}
+        </button>
+    </li>
+</ul>
+
+<div class="tab-content">
+    <div class="tab-pane fade show active" id="incoming">
+        <div class="card">
+            <div class="table-responsive">
+                <table class="table mb-0">
+                    <thead>
+                        <tr>
+                            <th>From</th>
+                            <th>Purpose</th>
+                            <th>Category</th>
+                            <th class="text-end">Amount</th>
+                            <th>Status</th>
+                            <th>Date</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in incoming %}
+                        <tr>
+                            <td><i class="bi bi-person-circle"></i> {{ r.requester.username }}</td>
+                            <td>{{ r.purpose }}</td>
+                            <td>{% if r.category %}<span class="badge" style="background-color:{{ r.category.color }}">{{ r.category.name }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                            <td class="text-end fw-bold">{{ r.currency.symbol|default:currency_symbol }}{{ r.amount|floatformat:2 }}</td>
+                            <td>
+                                {% if r.status == 'pending' %}<span class="badge bg-warning text-dark">Pending</span>
+                                {% elif r.status == 'approved' %}<span class="badge bg-success">Approved</span>
+                                {% elif r.status == 'rejected' %}<span class="badge bg-danger">Rejected</span>
+                                {% else %}<span class="badge bg-secondary">Cancelled</span>{% endif %}
+                            </td>
+                            <td><small>{{ r.created_at|date:"M d" }}</small></td>
+                            <td><a href="{% url 'request_detail' r.pk %}" class="btn btn-sm btn-outline-primary">Open</a></td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="7" class="text-center text-muted py-4">No incoming requests.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="tab-pane fade" id="outgoing">
+        <div class="card">
+            <div class="table-responsive">
+                <table class="table mb-0">
+                    <thead>
+                        <tr>
+                            <th>To</th>
+                            <th>Purpose</th>
+                            <th>Category</th>
+                            <th class="text-end">Amount</th>
+                            <th>Status</th>
+                            <th>Date</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in outgoing %}
+                        <tr>
+                            <td><i class="bi bi-person-circle"></i> {{ r.approver.username }}</td>
+                            <td>{{ r.purpose }}</td>
+                            <td>{% if r.category %}<span class="badge" style="background-color:{{ r.category.color }}">{{ r.category.name }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                            <td class="text-end fw-bold">{{ r.currency.symbol|default:currency_symbol }}{{ r.amount|floatformat:2 }}</td>
+                            <td>
+                                {% if r.status == 'pending' %}<span class="badge bg-warning text-dark">Pending</span>
+                                {% elif r.status == 'approved' %}<span class="badge bg-success">Approved</span>
+                                {% elif r.status == 'rejected' %}<span class="badge bg-danger">Rejected</span>
+                                {% else %}<span class="badge bg-secondary">Cancelled</span>{% endif %}
+                            </td>
+                            <td><small>{{ r.created_at|date:"M d" }}</small></td>
+                            <td><a href="{% url 'request_detail' r.pk %}" class="btn btn-sm btn-outline-primary">Open</a></td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="7" class="text-center text-muted py-4">You haven't made any requests.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

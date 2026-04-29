@@ -1,0 +1,121 @@
+{% extends 'budget_app/base.html' %}
+{% block title %}Forecast{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <div>
+        <h2 class="mb-0"><i class="bi bi-graph-up-arrow text-primary"></i> Predictive Forecast</h2>
+        <small class="text-muted">{{ month_label }} &middot; Based on your spending rate and upcoming recurring bills.</small>
+    </div>
+</div>
+
+<!-- Top stats -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3 col-6">
+        <div class="card stat-card p-3">
+            <small class="text-muted">Current Balance</small>
+            <div class="stat-value {% if forecast.current_balance < 0 %}text-danger{% else %}text-primary{% endif %}">
+                {{ currency_symbol }}{{ forecast.current_balance|floatformat:2 }}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3 col-6">
+        <div class="card stat-card p-3">
+            <small class="text-muted">Projected Balance</small>
+            <div class="stat-value {% if forecast.projected_balance < 0 %}text-danger{% else %}text-success{% endif %}">
+                {{ currency_symbol }}{{ forecast.projected_balance|floatformat:2 }}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3 col-6">
+        <div class="card stat-card p-3">
+            <small class="text-muted">Daily Burn Rate</small>
+            <div class="stat-value text-danger">{{ currency_symbol }}{{ forecast.daily_burn|floatformat:2 }}</div>
+        </div>
+    </div>
+    <div class="col-md-3 col-6">
+        <div class="card stat-card p-3">
+            <small class="text-muted">Days Remaining</small>
+            <div class="stat-value">{{ forecast.days_remaining }} <small class="text-muted fs-6">/ {{ forecast.days_total }}</small></div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3">
+    <div class="col-lg-7">
+        <div class="card p-4">
+            <h5 class="mb-3">Cumulative Spending This Month</h5>
+            <canvas id="forecastChart" height="100"></canvas>
+        </div>
+    </div>
+
+    <div class="col-lg-5">
+        <div class="card p-4 h-100">
+            <h5 class="mb-3">Forecast Breakdown</h5>
+            <table class="table table-sm">
+                <tbody>
+                    <tr>
+                        <td>Income so far</td>
+                        <td class="text-end text-success fw-bold">{{ currency_symbol }}{{ forecast.income_so_far|floatformat:2 }}</td>
+                    </tr>
+                    <tr>
+                        <td>Expense so far</td>
+                        <td class="text-end text-danger fw-bold">{{ currency_symbol }}{{ forecast.expense_so_far|floatformat:2 }}</td>
+                    </tr>
+                    <tr>
+                        <td>Daily inflow</td>
+                        <td class="text-end">{{ currency_symbol }}{{ forecast.daily_inflow|floatformat:2 }}</td>
+                    </tr>
+                    <tr>
+                        <td>Daily burn</td>
+                        <td class="text-end">{{ currency_symbol }}{{ forecast.daily_burn|floatformat:2 }}</td>
+                    </tr>
+                    <tr class="table-light">
+                        <td>Projected income (EoM)</td>
+                        <td class="text-end text-success">{{ currency_symbol }}{{ forecast.projected_income|floatformat:2 }}</td>
+                    </tr>
+                    <tr class="table-light">
+                        <td>Projected expense (EoM)</td>
+                        <td class="text-end text-danger">{{ currency_symbol }}{{ forecast.projected_expense|floatformat:2 }}</td>
+                    </tr>
+                    <tr class="border-top fw-bold">
+                        <td>Projected balance</td>
+                        <td class="text-end {% if forecast.projected_balance < 0 %}text-danger{% else %}text-success{% endif %}">
+                            {{ currency_symbol }}{{ forecast.projected_balance|floatformat:2 }}
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+            <p class="small text-muted mb-0 mt-2">
+                <i class="bi bi-info-circle"></i> Projection uses your current daily expense rate, adds known recurring bills,
+                and conservatively estimates additional income for the remaining {{ forecast.days_remaining }} days.
+            </p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+    new Chart(document.getElementById('forecastChart'), {
+        type: 'line',
+        data: {
+            labels: [{% for d in daily_spending %}'{{ d.date|date:"M d" }}'{% if not forloop.last %},{% endif %}{% endfor %}],
+            datasets: [{
+                label: 'Cumulative Expense',
+                data: [{% for d in daily_spending %}{{ d.cumulative }}{% if not forloop.last %},{% endif %}{% endfor %}],
+                borderColor: '#dc3545',
+                backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                fill: true,
+                tension: 0.3,
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: { y: { beginAtZero: true } }
+        }
+    });
+</script>
+{% endblock %}

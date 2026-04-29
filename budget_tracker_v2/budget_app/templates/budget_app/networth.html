@@ -1,0 +1,145 @@
+{% extends 'budget_app/base.html' %}
+{% block title %}Net Worth{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <div>
+        <h2 class="mb-0"><i class="bi bi-bank text-primary"></i> Net Worth Tracker</h2>
+        <small class="text-muted">Total assets minus total liabilities — the big-picture view of household wealth.</small>
+    </div>
+    <form method="post" action="{% url 'networth_snapshot' %}">
+        {% csrf_token %}
+        <button class="btn btn-outline-primary"><i class="bi bi-camera"></i> Take Snapshot</button>
+    </form>
+</div>
+
+<!-- Summary cards -->
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="card stat-card p-3">
+            <small class="text-muted">Total Assets</small>
+            <div class="stat-value text-success">{{ currency_symbol }}{{ data.total_assets|floatformat:2 }}</div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card stat-card p-3">
+            <small class="text-muted">Total Liabilities</small>
+            <div class="stat-value text-danger">{{ currency_symbol }}{{ data.total_liabilities|floatformat:2 }}</div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card stat-card p-3">
+            <small class="text-muted">Net Worth</small>
+            <div class="stat-value {% if data.net_worth < 0 %}text-danger{% else %}text-primary{% endif %}">
+                {{ currency_symbol }}{{ data.net_worth|floatformat:2 }}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3">
+    <!-- Assets -->
+    <div class="col-lg-6">
+        <div class="card p-4 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="mb-0 text-success"><i class="bi bi-wallet"></i> Assets</h5>
+                <a href="{% url 'asset_create' %}" class="btn btn-sm btn-success"><i class="bi bi-plus-lg"></i> Add</a>
+            </div>
+            <ul class="list-group list-group-flush">
+                {% for a in assets %}
+                <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                    <div>
+                        <strong>{{ a.name }}</strong>
+                        <div class="small text-muted">{{ a.get_asset_type_display }}{% if a.notes %} &middot; {{ a.notes|truncatechars:40 }}{% endif %}</div>
+                    </div>
+                    <div class="text-end">
+                        <div class="fw-bold text-success">{{ a.currency.symbol|default:currency_symbol }}{{ a.value|floatformat:2 }}</div>
+                        <div class="btn-group btn-group-sm mt-1">
+                            <a href="{% url 'asset_edit' a.pk %}" class="btn btn-outline-secondary"><i class="bi bi-pencil"></i></a>
+                            <a href="{% url 'asset_delete' a.pk %}" class="btn btn-outline-danger"><i class="bi bi-trash"></i></a>
+                        </div>
+                    </div>
+                </li>
+                {% empty %}
+                <li class="list-group-item text-center text-muted px-0">No assets recorded.</li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+
+    <!-- Liabilities -->
+    <div class="col-lg-6">
+        <div class="card p-4 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="mb-0 text-danger"><i class="bi bi-credit-card"></i> Liabilities</h5>
+                <a href="{% url 'liability_create' %}" class="btn btn-sm btn-danger"><i class="bi bi-plus-lg"></i> Add</a>
+            </div>
+            <ul class="list-group list-group-flush">
+                {% for l in liabilities %}
+                <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                    <div>
+                        <strong>{{ l.name }}</strong>
+                        <div class="small text-muted">
+                            {{ l.get_liability_type_display }}
+                            {% if l.interest_rate %} &middot; {{ l.interest_rate }}% APR{% endif %}
+                        </div>
+                    </div>
+                    <div class="text-end">
+                        <div class="fw-bold text-danger">{{ l.currency.symbol|default:currency_symbol }}{{ l.balance|floatformat:2 }}</div>
+                        <div class="btn-group btn-group-sm mt-1">
+                            <a href="{% url 'liability_edit' l.pk %}" class="btn btn-outline-secondary"><i class="bi bi-pencil"></i></a>
+                            <a href="{% url 'liability_delete' l.pk %}" class="btn btn-outline-danger"><i class="bi bi-trash"></i></a>
+                        </div>
+                    </div>
+                </li>
+                {% empty %}
+                <li class="list-group-item text-center text-muted px-0">No liabilities recorded.</li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+</div>
+
+{% if snapshots %}
+<div class="card p-4 mt-3">
+    <h5 class="mb-3"><i class="bi bi-graph-up"></i> Net Worth Over Time</h5>
+    <canvas id="snapshotChart" height="80"></canvas>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+{% if snapshots %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+    new Chart(document.getElementById('snapshotChart'), {
+        type: 'line',
+        data: {
+            labels: [{% for s in snapshots %}'{{ s.snapshot_date|date:"M d" }}'{% if not forloop.last %},{% endif %}{% endfor %}],
+            datasets: [
+                {
+                    label: 'Net Worth',
+                    data: [{% for s in snapshots %}{{ s.net_worth }}{% if not forloop.last %},{% endif %}{% endfor %}],
+                    borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.1)', fill: true, tension: 0.3,
+                },
+                {
+                    label: 'Assets',
+                    data: [{% for s in snapshots %}{{ s.total_assets }}{% if not forloop.last %},{% endif %}{% endfor %}],
+                    borderColor: '#198754', borderDash: [5, 5], fill: false, tension: 0.3,
+                },
+                {
+                    label: 'Liabilities',
+                    data: [{% for s in snapshots %}{{ s.total_liabilities }}{% if not forloop.last %},{% endif %}{% endfor %}],
+                    borderColor: '#dc3545', borderDash: [5, 5], fill: false, tension: 0.3,
+                },
+            ],
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { position: 'bottom' } }
+        }
+    });
+</script>
+{% endif %}
+{% endblock %}
