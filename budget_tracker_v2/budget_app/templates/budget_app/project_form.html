@@ -1,0 +1,32 @@
+{% extends 'budget_app/base.html' %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+
+<nav class="mb-3 small">
+    <a href="{% url 'project_list' %}" class="text-decoration-none"><i class="bi bi-chevron-left"></i> Projects</a>
+</nav>
+
+<div class="row justify-content-center">
+    <div class="col-lg-7">
+        <div class="card p-4">
+            <h3 class="mb-3"><i class="bi bi-bookmark-star text-primary"></i> {{ title }}</h3>
+            <form method="post" novalidate>
+                {% csrf_token %}
+                {% for field in form %}
+                <div class="mb-3">
+                    <label class="form-label">{{ field.label }}</label>
+                    {{ field }}
+                    {% if field.help_text %}<small class="text-muted d-block">{{ field.help_text }}</small>{% endif %}
+                    {% for e in field.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+                </div>
+                {% endfor %}
+                <div class="d-flex justify-content-between">
+                    <a href="{% url 'project_list' %}" class="text-muted">Cancel</a>
+                    <button class="btn btn-primary"><i class="bi bi-check-lg"></i> Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

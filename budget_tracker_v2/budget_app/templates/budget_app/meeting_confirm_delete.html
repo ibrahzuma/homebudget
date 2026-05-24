@@ -1,0 +1,22 @@
+{% extends 'budget_app/base.html' %}
+{% block title %}Delete Meeting{% endblock %}
+{% block content %}
+
+<div class="row justify-content-center">
+    <div class="col-lg-6">
+        <div class="card p-4">
+            <h4 class="mb-3 text-danger"><i class="bi bi-exclamation-triangle"></i> Delete this meeting?</h4>
+            <p>You are about to delete <strong>{{ meeting.title }}</strong> on {{ meeting.meeting_date|date:"M d, Y" }}.</p>
+            <p class="text-muted small">All agreement items linked to this meeting will be removed too.</p>
+            <form method="post">
+                {% csrf_token %}
+                <div class="d-flex justify-content-between">
+                    <a href="{% url 'meeting_detail' meeting.pk %}" class="text-muted">Cancel</a>
+                    <button class="btn btn-danger"><i class="bi bi-trash"></i> Delete</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

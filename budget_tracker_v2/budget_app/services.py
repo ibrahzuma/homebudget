@@ -8,6 +8,7 @@ from django.utils import timezone
 from .models import (
     Transaction, Budget, RecurringTransaction, Alert,
     CategoryRule, Asset, Liability, NetWorthSnapshot, ExchangeRate,
+    Meeting,
 )
 
 
@@ -150,6 +151,37 @@ def check_budget_alerts(household, today=None):
     return new_alerts
 
 
+def check_upcoming_meeting_alerts(household, today=None, days_ahead=7):
+    """Create an Alert when a planned meeting is within `days_ahead` days.
+
+    Dedupes by link_url so a meeting only generates one upcoming-reminder Alert.
+    """
+    today = today or timezone.now().date()
+    cutoff = today + timedelta(days=days_ahead)
+    upcoming = household.meetings.filter(
+        status=Meeting.STATUS_PLANNED,
+        meeting_date__gte=today, meeting_date__lte=cutoff,
+    )
+    created = []
+    for m in upcoming:
+        link = f"/meetings/{m.pk}/"
+        if Alert.objects.filter(household=household, link_url=link).exists():
+            continue
+        days = (m.meeting_date - today).days
+        when = "today" if days == 0 else (
+            "tomorrow" if days == 1 else f"in {days} days"
+        )
+        a = Alert.objects.create(
+            household=household,
+            title=f"Upcoming meeting: {m.title}",
+            message=f"\"{m.title}\" is scheduled {when} ({m.meeting_date.strftime('%a, %b %d')}).",
+            level=Alert.LEVEL_INFO,
+            link_url=link,
+        )
+        created.append(a)
+    return created
+
+
 def reset_monthly_budget_alerts(household, today=None):
     """Reset alert flags at start of each month."""
     today = today or timezone.now().date()
@@ -277,19 +309,17 @@ def compute_net_worth(household):
 # -------- bill calendar --------
 
 def bills_in_month(household, target_date):
-    """Return dict mapping date -> list of (recurring or one-off bill) items for the month.
+    """Return dict mapping date -> list of recurring expense AND income items for the month.
 
-    Combines RecurringTransaction occurrences and existing expense Transactions.
+    Used by the cash-flow calendar. Each item dict has a `kind`:
+      'expense' for outflows, 'income' for inflows.
     """
     month_start, month_end = month_range(target_date)
     days = {}
 
-    # Project recurring expenses across the month
-    for r in household.recurring_transactions.filter(
-        is_active=True, transaction_type=Transaction.EXPENSE
-    ):
+    for r in household.recurring_transactions.filter(is_active=True):
+        kind = 'income' if r.transaction_type == Transaction.INCOME else 'expense'
         cursor = r.next_due_date
-        # Walk back to start of month if needed
         guard = 0
         # Move cursor forward into the month
         while cursor < month_start and guard < 60:
@@ -300,11 +330,12 @@ def bills_in_month(household, target_date):
             if r.end_date and cursor > r.end_date:
                 break
             days.setdefault(cursor, []).append({
-                'kind': 'recurring',
+                'kind': kind,
                 'name': r.name,
                 'amount': r.amount,
                 'category': r.category,
                 'payee': r.payee,
+                'transaction_type': r.transaction_type,
             })
             cursor = r.advance_due_date(from_date=cursor)
             guard += 1

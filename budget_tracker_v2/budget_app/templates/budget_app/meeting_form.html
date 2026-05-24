@@ -1,0 +1,73 @@
+{% extends 'budget_app/base.html' %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+
+<nav class="mb-3 small">
+    <a href="{% url 'meeting_list' %}" class="text-decoration-none"><i class="bi bi-chevron-left"></i> All meetings</a>
+</nav>
+
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="card p-4">
+            <h3 class="mb-3"><i class="bi bi-calendar-event text-primary"></i> {{ title }}</h3>
+            <form method="post" novalidate>
+                {% csrf_token %}
+
+                <div class="mb-3">
+                    <label class="form-label">{{ form.title.label }}</label>
+                    {{ form.title }}
+                    {% for e in form.title.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label">{{ form.meeting_date.label }}</label>
+                        {{ form.meeting_date }}
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">{{ form.status.label }}</label>
+                        {{ form.status }}
+                    </div>
+                </div>
+
+                <div class="mb-3 mt-3">
+                    <label class="form-label">{{ form.participants.label }}</label>
+                    <div class="border rounded p-2 small">
+                        {% for choice in form.participants %}
+                        <div class="form-check">{{ choice.tag }} <label class="form-check-label">{{ choice.choice_label }}</label></div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">{{ form.agenda.label }}</label>
+                    {{ form.agenda }}
+                    {% if form.agenda.help_text %}<small class="text-muted">{{ form.agenda.help_text }}</small>{% endif %}
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">{{ form.minutes.label }}</label>
+                    {{ form.minutes }}
+                    {% if form.minutes.help_text %}<small class="text-muted">{{ form.minutes.help_text }}</small>{% endif %}
+                </div>
+
+                {% if form.carry_over_open_items %}
+                <div class="form-check mb-3">
+                    {{ form.carry_over_open_items }}
+                    <label class="form-check-label" for="{{ form.carry_over_open_items.id_for_label }}">
+                        {{ form.carry_over_open_items.label }}
+                    </label>
+                    <small class="text-muted d-block">Copies still-open and in-progress items from your previous meeting so nothing slips.</small>
+                </div>
+                {% endif %}
+
+                <div class="d-flex justify-content-between">
+                    <a href="{% url 'meeting_list' %}" class="text-muted">Cancel</a>
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save Meeting</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

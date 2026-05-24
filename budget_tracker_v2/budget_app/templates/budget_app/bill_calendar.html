@@ -1,10 +1,25 @@
 {% extends 'budget_app/base.html' %}
-{% block title %}Bill Calendar{% endblock %}
+{% load humanize %}
+{% block title %}Cash-Flow Calendar{% endblock %}
 {% block content %}
 
+<style>
+    .cf-bill { border-radius: 4px; padding: 2px 6px; font-size: 0.7rem;
+               margin-bottom: 2px; white-space: nowrap; overflow: hidden;
+               text-overflow: ellipsis; }
+    .cf-income { background: #d1f7e7; color: #0a6b4b; }
+    .cf-expense { background: #fde2e4; color: #a32b3a; }
+    .cf-cell-positive { border-left: 4px solid #198754; }
+    .cf-cell-negative { border-left: 4px solid #dc3545; }
+    .cf-cell-neutral  { border-left: 4px solid #cbd5e1; }
+</style>
+
 <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
-    <h2 class="mb-0"><i class="bi bi-calendar3 text-primary"></i> Bill Calendar</h2>
-    <a href="{% url 'recurring_create' %}" class="btn btn-primary"><i class="bi bi-plus-lg"></i> Add Bill</a>
+    <div>
+        <h2 class="mb-0"><i class="bi bi-calendar3 text-primary"></i> Cash-Flow Calendar</h2>
+        <small class="text-muted">Projected income and expenses for each day, with the running net flow.</small>
+    </div>
+    <a href="{% url 'recurring_create' %}" class="btn btn-primary"><i class="bi bi-plus-lg"></i> Add Recurring</a>
 </div>
 
 <div class="card p-3 mb-3">
@@ -14,7 +29,13 @@
         </a>
         <div class="text-center">
             <h4 class="mb-0">{{ month_label }}</h4>
-            <small class="text-muted">Total bills: {{ currency_symbol }}{{ month_total|floatformat:2 }}</small>
+            <div class="d-flex gap-3 justify-content-center mt-1 small">
+                <span class="text-success">Income: {{ currency_symbol }}{{ month_income|floatformat:2|intcomma }}</span>
+                <span class="text-danger">Expense: {{ currency_symbol }}{{ month_expense|floatformat:2|intcomma }}</span>
+                <span class="{% if month_net < 0 %}text-danger{% else %}text-success{% endif %} fw-bold">
+                    Net: {{ currency_symbol }}{{ month_net|floatformat:2|intcomma }}
+                </span>
+            </div>
         </div>
         <a href="?year={{ next_month.year }}&month={{ next_month.month }}" class="btn btn-outline-secondary">
             {{ next_month|date:"M Y" }} <i class="bi bi-chevron-right"></i>
@@ -33,15 +54,25 @@
         <div class="calendar-day-header">Sun</div>
         {% for week in weeks %}
             {% for day in week %}
-            <div class="calendar-cell {% if not day.in_month %}out-of-month{% endif %} {% if day.is_today %}today{% endif %}">
+            <div class="calendar-cell
+                {% if not day.in_month %}out-of-month{% endif %}
+                {% if day.is_today %}today{% endif %}
+                {% if day.net > 0 %}cf-cell-positive
+                {% elif day.net < 0 %}cf-cell-negative
+                {% elif day.bills %}cf-cell-neutral{% endif %}">
                 <div class="calendar-day-num {% if day.is_today %}text-primary{% endif %}">{{ day.date|date:"j" }}</div>
                 {% for bill in day.bills %}
-                    <div class="calendar-bill" title="{{ bill.name }}: {{ currency_symbol }}{{ bill.amount }}">
-                        <i class="bi bi-receipt"></i> {{ bill.name }}: {{ currency_symbol }}{{ bill.amount|floatformat:0 }}
+                    <div class="cf-bill {% if bill.kind == 'income' %}cf-income{% else %}cf-expense{% endif %}"
+                         title="{{ bill.name }}: {{ currency_symbol }}{{ bill.amount }}">
+                        {% if bill.kind == 'income' %}<i class="bi bi-arrow-down-left-circle"></i>
+                        {% else %}<i class="bi bi-arrow-up-right-circle"></i>{% endif %}
+                        {{ bill.name }}: {{ currency_symbol }}{{ bill.amount|floatformat:0|intcomma }}
                     </div>
                 {% endfor %}
                 {% if day.bills %}
-                    <small class="text-muted d-block mt-1">{{ currency_symbol }}{{ day.total|floatformat:0 }}</small>
+                    <small class="d-block mt-1 {% if day.net < 0 %}text-danger{% elif day.net > 0 %}text-success{% else %}text-muted{% endif %} fw-bold">
+                        Net {{ currency_symbol }}{{ day.net|floatformat:0|intcomma }}
+                    </small>
                 {% endif %}
             </div>
             {% endfor %}
@@ -50,8 +81,10 @@
 </div>
 
 <p class="text-muted small mt-3">
-    <i class="bi bi-info-circle"></i> The calendar shows projected dates for active recurring transactions.
-    Add or edit recurring entries from the <a href="{% url 'recurring_list' %}">Recurring Transactions</a> page.
+    <i class="bi bi-info-circle"></i> Days are color-tabbed by net flow &mdash;
+    <span class="text-success">green</span> when income exceeds expenses,
+    <span class="text-danger">red</span> when expenses exceed income.
+    Edit recurring entries from the <a href="{% url 'recurring_list' %}">Recurring Transactions</a> page.
 </p>
 
 {% endblock %}

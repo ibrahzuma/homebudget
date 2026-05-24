@@ -4,7 +4,8 @@ from django.contrib.auth.models import User
 
 from .models import (
     Transaction, Category, Budget, Household, RecurringTransaction,
-    CategoryRule, Asset, Liability, MoneyRequest, Currency,
+    CategoryRule, Asset, Liability, LiabilityPayment, MoneyRequest, Currency,
+    Meeting, AgreementItem, Goal, GoalContribution, Project,
 )
 
 
@@ -47,7 +48,7 @@ class TransactionForm(BootstrapMixin, forms.ModelForm):
     class Meta:
         model = Transaction
         fields = ('transaction_type', 'category', 'amount', 'currency',
-                  'payee', 'description', 'date')
+                  'payee', 'description', 'date', 'project')
         widgets = {
             'date': forms.DateInput(attrs={'type': 'date'}),
             'description': forms.TextInput(attrs={'placeholder': 'Optional notes'}),
@@ -58,6 +59,11 @@ class TransactionForm(BootstrapMixin, forms.ModelForm):
         super().__init__(*args, **kwargs)
         if household:
             self.fields['category'].queryset = Category.objects.filter(household=household)
+            self.fields['project'].queryset = Project.objects.filter(
+                household=household
+            ).exclude(status__in=[Project.STATUS_COMPLETED, Project.STATUS_CANCELLED])
+            self.fields['project'].required = False
+            self.fields['project'].empty_label = '— None —'
             if household.base_currency:
                 self.fields['currency'].initial = household.base_currency
 
@@ -124,15 +130,60 @@ class CategoryRuleForm(BootstrapMixin, forms.ModelForm):
 class AssetForm(BootstrapMixin, forms.ModelForm):
     class Meta:
         model = Asset
-        fields = ('name', 'asset_type', 'value', 'currency', 'notes')
-        widgets = {'notes': forms.Textarea()}
+        fields = ('name', 'asset_type', 'value', 'currency',
+                  'acquisition_date', 'location', 'size', 'registration_number',
+                  'notes')
+        widgets = {
+            'notes': forms.Textarea(),
+            'acquisition_date': forms.DateInput(attrs={'type': 'date'}),
+            'location': forms.TextInput(attrs={'placeholder': 'e.g. Plot 17, Mikocheni'}),
+            'size': forms.TextInput(attrs={'placeholder': 'e.g. 120 m², 0.5 acre, 3 bed / 2 bath'}),
+            'registration_number': forms.TextInput(attrs={'placeholder': 'Title deed / plate / license #'}),
+        }
 
 
 class LiabilityForm(BootstrapMixin, forms.ModelForm):
     class Meta:
         model = Liability
-        fields = ('name', 'liability_type', 'balance', 'currency', 'interest_rate', 'notes')
-        widgets = {'notes': forms.Textarea()}
+        fields = ('name', 'liability_type', 'lender', 'balance', 'original_amount',
+                  'currency', 'interest_rate', 'start_date', 'due_date', 'notes')
+        widgets = {
+            'notes': forms.Textarea(),
+            'start_date': forms.DateInput(attrs={'type': 'date'}),
+            'due_date': forms.DateInput(attrs={'type': 'date'}),
+            'lender': forms.TextInput(attrs={'placeholder': 'Bank, person, or institution'}),
+        }
+
+
+class LiabilityPaymentForm(BootstrapMixin, forms.ModelForm):
+    record_as_expense = forms.BooleanField(
+        required=False, initial=True,
+        label='Also record this payment as a household expense',
+    )
+    expense_category = forms.ModelChoiceField(
+        queryset=Category.objects.none(), required=False,
+        label='Expense category (if recorded as expense)',
+        help_text='Optional — leave blank to auto-create a "Debt Payment" category.'
+    )
+
+    class Meta:
+        model = LiabilityPayment
+        fields = ('date', 'amount', 'currency', 'notes')
+        widgets = {
+            'date': forms.DateInput(attrs={'type': 'date'}),
+            'notes': forms.Textarea(attrs={'rows': 2}),
+        }
+
+    def __init__(self, *args, household=None, liability=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if household:
+            self.fields['expense_category'].queryset = Category.objects.filter(
+                household=household, category_type=Category.EXPENSE
+            )
+            if household.base_currency and not self.initial.get('currency'):
+                self.fields['currency'].initial = household.base_currency
+        if liability and not self.initial.get('currency'):
+            self.fields['currency'].initial = liability.currency
 
 
 class MoneyRequestForm(BootstrapMixin, forms.ModelForm):
@@ -181,3 +232,109 @@ class ExchangeRateForm(BootstrapMixin, forms.Form):
     from_currency = forms.ModelChoiceField(queryset=Currency.objects.all())
     to_currency = forms.ModelChoiceField(queryset=Currency.objects.all())
     rate = forms.DecimalField(max_digits=18, decimal_places=6)
+
+
+class MeetingForm(BootstrapMixin, forms.ModelForm):
+    carry_over_open_items = forms.BooleanField(
+        required=False, initial=True,
+        label='Carry over open action items from the previous meeting',
+    )
+
+    class Meta:
+        model = Meeting
+        fields = ('title', 'meeting_date', 'participants', 'agenda', 'minutes', 'status')
+        widgets = {
+            'meeting_date': forms.DateInput(attrs={'type': 'date'}),
+            'participants': forms.CheckboxSelectMultiple(),
+            'agenda': forms.Textarea(attrs={'rows': 3,
+                'placeholder': 'Topics to cover, e.g. budget review, savings, upcoming expenses'}),
+            'minutes': forms.Textarea(attrs={'rows': 5,
+                'placeholder': 'What was discussed and decided'}),
+        }
+
+    def __init__(self, *args, household=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._previous_meeting = None
+        if household:
+            self.fields['participants'].queryset = household.members.all()
+            if not self.instance.pk:
+                self.fields['participants'].initial = household.members.all()
+                self._previous_meeting = household.meetings.order_by('-meeting_date').first()
+        # CheckboxSelectMultiple doesn't want the form-select class
+        self.fields['participants'].widget.attrs.pop('class', None)
+        # Only show the carry-over checkbox on create when a previous meeting exists
+        if self.instance.pk or not self._previous_meeting:
+            self.fields.pop('carry_over_open_items')
+
+
+class AgreementItemForm(BootstrapMixin, forms.ModelForm):
+    class Meta:
+        model = AgreementItem
+        fields = ('title', 'description', 'owner', 'target_date',
+                  'status', 'progress', 'priority', 'notes')
+        widgets = {
+            'target_date': forms.DateInput(attrs={'type': 'date'}),
+            'description': forms.Textarea(attrs={'rows': 2}),
+            'notes': forms.Textarea(attrs={'rows': 2}),
+            'progress': forms.NumberInput(attrs={'min': 0, 'max': 100, 'step': 5}),
+        }
+
+    def __init__(self, *args, household=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if household:
+            self.fields['owner'].queryset = household.members.all()
+
+
+# ------------- Goals & Projects -------------
+
+class GoalForm(BootstrapMixin, forms.ModelForm):
+    class Meta:
+        model = Goal
+        fields = ('name', 'target_amount', 'currency', 'target_date',
+                  'monthly_contribution', 'icon', 'color', 'status', 'notes')
+        widgets = {
+            'target_date': forms.DateInput(attrs={'type': 'date'}),
+            'color': forms.TextInput(attrs={'type': 'color'}),
+            'icon': forms.TextInput(attrs={'placeholder': 'bi-piggy-bank'}),
+            'notes': forms.Textarea(attrs={'rows': 2}),
+        }
+
+    def __init__(self, *args, household=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if household and household.base_currency and not self.initial.get('currency'):
+            self.fields['currency'].initial = household.base_currency
+
+
+class GoalContributionForm(BootstrapMixin, forms.ModelForm):
+    record_as_expense = forms.BooleanField(
+        required=False, initial=False,
+        label='Also record this contribution as a household expense',
+        help_text='Only check this if the contribution is moving out of your spendable money.'
+    )
+
+    class Meta:
+        model = GoalContribution
+        fields = ('amount', 'date', 'notes')
+        widgets = {
+            'date': forms.DateInput(attrs={'type': 'date'}),
+            'notes': forms.Textarea(attrs={'rows': 2}),
+        }
+
+
+class ProjectForm(BootstrapMixin, forms.ModelForm):
+    class Meta:
+        model = Project
+        fields = ('name', 'description', 'budget', 'currency',
+                  'start_date', 'end_date', 'status', 'color', 'icon')
+        widgets = {
+            'description': forms.Textarea(attrs={'rows': 3}),
+            'start_date': forms.DateInput(attrs={'type': 'date'}),
+            'end_date': forms.DateInput(attrs={'type': 'date'}),
+            'color': forms.TextInput(attrs={'type': 'color'}),
+            'icon': forms.TextInput(attrs={'placeholder': 'bi-bookmark-star'}),
+        }
+
+    def __init__(self, *args, household=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if household and household.base_currency and not self.initial.get('currency'):
+            self.fields['currency'].initial = household.base_currency

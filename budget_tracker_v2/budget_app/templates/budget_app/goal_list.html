@@ -1,0 +1,74 @@
+{% extends 'budget_app/base.html' %}
+{% load humanize %}
+{% block title %}Savings Goals{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <div>
+        <h2 class="mb-0"><i class="bi bi-piggy-bank text-success"></i> Savings Goals</h2>
+        <small class="text-muted">What you're saving for — and how close you are.</small>
+    </div>
+    <a href="{% url 'goal_create' %}" class="btn btn-success"><i class="bi bi-plus-lg"></i> New Goal</a>
+</div>
+
+<div class="row g-3">
+    {% for g in goals %}
+    <div class="col-lg-6">
+        <div class="card p-4 h-100">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <h5 class="mb-1">
+                        <i class="bi {{ g.icon }}" style="color: {{ g.color }}"></i>
+                        <a href="{% url 'goal_detail' g.pk %}" class="text-decoration-none">{{ g.name }}</a>
+                    </h5>
+                    <small class="text-muted">
+                        {% if g.status == 'achieved' %}<span class="badge bg-success">Achieved</span>
+                        {% elif g.status == 'paused' %}<span class="badge bg-secondary">Paused</span>
+                        {% else %}<span class="badge bg-primary">Active</span>{% endif %}
+                        {% if g.target_date %} &middot; by {{ g.target_date|date:"M Y" }}{% endif %}
+                    </small>
+                </div>
+                <div class="text-end small text-muted">
+                    {{ g.currency.symbol|default:currency_symbol }}{{ g.current_amount|floatformat:0|intcomma }}
+                    <br>of {{ g.currency.symbol|default:currency_symbol }}{{ g.target_amount|floatformat:0|intcomma }}
+                </div>
+            </div>
+
+            <div class="mt-3">
+                <div class="progress" style="height: 12px;">
+                    <div class="progress-bar" style="width: {{ g.progress_percent }}%; background-color: {{ g.color }}">{{ g.progress_percent }}%</div>
+                </div>
+            </div>
+
+            <div class="mt-3 d-flex justify-content-between align-items-center small">
+                <div>
+                    {% if g.target_date %}
+                        {% if g.on_track is True %}
+                            <span class="text-success"><i class="bi bi-check-circle"></i> On track</span>
+                        {% elif g.on_track is False %}
+                            <span class="text-warning"><i class="bi bi-exclamation-triangle"></i> Need {{ currency_symbol }}{{ g.monthly_needed|floatformat:0|intcomma }}/mo</span>
+                        {% else %}
+                            <span class="text-muted">No monthly plan set</span>
+                        {% endif %}
+                    {% endif %}
+                </div>
+                <div class="d-flex gap-2">
+                    <a href="{% url 'goal_contribute' g.pk %}" class="btn btn-sm btn-outline-success"><i class="bi bi-plus-circle"></i> Add</a>
+                    <a href="{% url 'goal_detail' g.pk %}" class="btn btn-sm btn-outline-secondary">Open</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% empty %}
+    <div class="col-12">
+        <div class="card p-5 text-center">
+            <i class="bi bi-piggy-bank display-5 text-muted mb-3"></i>
+            <h5>No savings goals yet</h5>
+            <p class="text-muted">Set a target, an optional deadline, and start contributing toward it.</p>
+            <div><a href="{% url 'goal_create' %}" class="btn btn-success"><i class="bi bi-plus-lg"></i> Add your first goal</a></div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+{% endblock %}

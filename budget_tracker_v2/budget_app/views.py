@@ -18,13 +18,17 @@ from django.utils import timezone
 from .forms import (
     SignUpForm, HouseholdForm, TransactionForm, CategoryForm, BudgetForm,
     RecurringTransactionForm, CategoryRuleForm, AssetForm, LiabilityForm,
+    LiabilityPaymentForm,
     MoneyRequestForm, MoneyRequestResponseForm, CSVImportForm,
     CurrencyForm, ExchangeRateForm,
+    MeetingForm, AgreementItemForm,
+    GoalForm, GoalContributionForm, ProjectForm,
 )
 from .models import (
     Household, Transaction, Category, Budget, RecurringTransaction,
-    CategoryRule, Alert, MoneyRequest, Asset, Liability, NetWorthSnapshot,
-    Currency, ExchangeRate,
+    CategoryRule, Alert, MoneyRequest, Asset, Liability, LiabilityPayment,
+    NetWorthSnapshot, Currency, ExchangeRate,
+    Meeting, AgreementItem, Goal, GoalContribution, Project,
 )
 from .services import (
     apply_category_rules, apply_due_recurring, upcoming_recurring,
@@ -210,16 +214,14 @@ def dashboard(request):
             s=Sum('amount_base'))['s'] or Decimal('0')
         m_exp = qs.filter(user=member, transaction_type=Transaction.EXPENSE).aggregate(
             s=Sum('amount_base'))['s'] or Decimal('0')
+        exp_share = float(m_exp / total_expense * 100) if total_expense else 0
+        inc_share = float(m_inc / total_income * 100) if total_income else 0
         members_data.append({
-            'user': member, 'income': m_inc, 'expense': m_exp, 'net': m_inc - m_exp
+            'user': member, 'income': m_inc, 'expense': m_exp,
+            'net': m_inc - m_exp,
+            'expense_share_pct': round(exp_share, 1),
+            'income_share_pct': round(inc_share, 1),
         })
-
-    category_breakdown = list(
-        qs.filter(transaction_type=Transaction.EXPENSE, category__isnull=False)
-        .values('category__name', 'category__color')
-        .annotate(total=Sum('amount_base'))
-        .order_by('-total')
-    )
 
     budgets = Budget.objects.filter(household=household, month=month_start)
     budget_progress = []
@@ -233,6 +235,33 @@ def dashboard(request):
             'pct': min(round(pct, 1), 100), 'over': spent > b.monthly_limit,
         })
 
+    # Spending trends: last 6 months income vs expense
+    def add_months_back(d, n):
+        m = d.month - 1 - n
+        year = d.year + (m // 12)
+        return d.replace(year=year, month=(m % 12) + 1, day=1)
+
+    trend_months = []
+    for i in range(5, -1, -1):
+        ms = add_months_back(month_start, i)
+        me_first, me_last = month_range(ms)
+        inc = Transaction.objects.filter(
+            household=household, transaction_type=Transaction.INCOME,
+            date__gte=me_first, date__lte=me_last
+        ).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
+        exp = Transaction.objects.filter(
+            household=household, transaction_type=Transaction.EXPENSE,
+            date__gte=me_first, date__lte=me_last
+        ).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
+        trend_months.append({
+            'label': ms.strftime('%b %y'),
+            'income': float(inc),
+            'expense': float(exp),
+        })
+
+    # Active goals (top 4 by progress remaining)
+    active_goals = household.goals.filter(status=Goal.STATUS_ACTIVE).order_by('-target_amount')[:4]
+
     recent = qs.select_related('user', 'category')[:6]
     upcoming = upcoming_recurring(household, days=7)
     forecast = forecast_end_of_month(household)
@@ -242,6 +271,11 @@ def dashboard(request):
         household=household, approver=request.user, status=MoneyRequest.STATUS_PENDING
     )
 
+    # Next upcoming meeting
+    next_meeting = household.meetings.filter(
+        status=Meeting.STATUS_PLANNED, meeting_date__gte=today
+    ).order_by('meeting_date').first()
+
     context = {
         'household': household,
         'month_label': month_start.strftime('%B %Y'),
@@ -249,13 +283,15 @@ def dashboard(request):
         'total_expense': total_expense,
         'balance': balance,
         'members_data': members_data,
-        'category_breakdown': category_breakdown,
         'budget_progress': budget_progress,
         'recent': recent,
         'upcoming': upcoming,
         'forecast': forecast,
         'networth': networth,
         'pending_my_approvals': pending_my_approvals,
+        'trend_months': trend_months,
+        'active_goals': active_goals,
+        'next_meeting': next_meeting,
     }
     return render(request, 'budget_app/dashboard.html', context)
 
@@ -568,13 +604,18 @@ def bill_calendar(request):
     week = []
     while d <= grid_end:
         bills = days_with_bills.get(d, [])
-        total = sum(b['amount'] for b in bills) if bills else 0
+        income = sum((b['amount'] for b in bills if b.get('kind') == 'income'), Decimal('0'))
+        expense = sum((b['amount'] for b in bills if b.get('kind') != 'income'), Decimal('0'))
+        net = income - expense
         week.append({
             'date': d,
             'in_month': d.month == month,
             'is_today': d == today,
             'bills': bills,
-            'total': total,
+            'total': expense,           # back-compat: expense total of the day
+            'income': income,
+            'expense': expense,
+            'net': net,
         })
         if len(week) == 7:
             weeks.append(week)
@@ -588,8 +629,13 @@ def bill_calendar(request):
     else:
         next_month = date(year, month + 1, 1)
 
-    month_total = sum(
-        sum(b['amount'] for b in days) for days in days_with_bills.values()
+    month_expense = sum(
+        (b['amount'] for items in days_with_bills.values() for b in items
+         if b.get('kind') != 'income'), Decimal('0')
+    )
+    month_income = sum(
+        (b['amount'] for items in days_with_bills.values() for b in items
+         if b.get('kind') == 'income'), Decimal('0')
     )
 
     return render(request, 'budget_app/bill_calendar.html', {
@@ -598,7 +644,10 @@ def bill_calendar(request):
         'weeks': weeks,
         'prev_month': prev_month,
         'next_month': next_month,
-        'month_total': month_total,
+        'month_total': month_expense,   # back-compat
+        'month_expense': month_expense,
+        'month_income': month_income,
+        'month_net': month_income - month_expense,
         'today': today,
     })
 
@@ -912,8 +961,8 @@ def liability_create(request):
             if not l.currency:
                 l.currency = household.base_currency
             l.save()
-            messages.success(request, "Liability added.")
-            return redirect('networth')
+            messages.success(request, "Debt added.")
+            return redirect('debt_list')
     else:
         form = LiabilityForm(initial={'currency': household.base_currency})
     return render(request, 'budget_app/liability_form.html', {
@@ -930,11 +979,11 @@ def liability_edit(request, pk):
         form = LiabilityForm(request.POST, instance=liab)
         if form.is_valid():
             form.save()
-            return redirect('networth')
+            return redirect('debt_detail', pk=liab.pk)
     else:
         form = LiabilityForm(instance=liab)
     return render(request, 'budget_app/liability_form.html', {
-        'form': form, 'title': 'Edit Liability'
+        'form': form, 'title': 'Edit Debt'
     })
 
 
@@ -945,8 +994,125 @@ def liability_delete(request, pk):
     liab = get_object_or_404(Liability, pk=pk, household=household)
     if request.method == 'POST':
         liab.delete()
-        return redirect('networth')
+        return redirect('debt_list')
     return render(request, 'budget_app/liability_confirm_delete.html', {'liability': liab})
+
+
+# ============================================================
+# DEBTS (Liability list/detail and payments)
+# ============================================================
+
+@login_required
+@ensure_household
+def debt_list(request):
+    household = get_user_household(request.user)
+    liabilities = household.liabilities.select_related('currency').all()
+    rows = []
+    total_balance = Decimal('0')
+    total_paid = Decimal('0')
+    for l in liabilities:
+        paid = l.total_paid
+        original = l.original_amount or (l.balance + paid)
+        pct = float(paid / original * 100) if original else 0
+        rows.append({
+            'liability': l, 'paid': paid, 'original': original,
+            'pct': min(round(pct, 1), 100),
+            'payments_count': l.payments.count(),
+        })
+        total_balance += l.balance
+        total_paid += paid
+    return render(request, 'budget_app/debt_list.html', {
+        'rows': rows,
+        'total_balance': total_balance,
+        'total_paid': total_paid,
+    })
+
+
+@login_required
+@ensure_household
+def debt_detail(request, pk):
+    household = get_user_household(request.user)
+    liab = get_object_or_404(Liability, pk=pk, household=household)
+    payments = liab.payments.select_related('currency', 'transaction').all()
+    paid = liab.total_paid
+    original = liab.original_amount or (liab.balance + paid)
+    pct = float(paid / original * 100) if original else 0
+    return render(request, 'budget_app/debt_detail.html', {
+        'liability': liab,
+        'payments': payments,
+        'paid': paid,
+        'original': original,
+        'pct': min(round(pct, 1), 100),
+    })
+
+
+@login_required
+@ensure_household
+def payment_create(request, pk):
+    household = get_user_household(request.user)
+    liab = get_object_or_404(Liability, pk=pk, household=household)
+    if request.method == 'POST':
+        form = LiabilityPaymentForm(request.POST, household=household, liability=liab)
+        if form.is_valid():
+            with db_transaction.atomic():
+                payment = form.save(commit=False)
+                payment.liability = liab
+                if not payment.currency:
+                    payment.currency = liab.currency or household.base_currency
+                # Optionally record an expense transaction
+                if form.cleaned_data.get('record_as_expense'):
+                    cat = form.cleaned_data.get('expense_category')
+                    if not cat:
+                        cat, _ = Category.objects.get_or_create(
+                            household=household, name='Debt Payment',
+                            category_type=Category.EXPENSE,
+                            defaults={'color': '#dc3545', 'icon': 'bi-cash-stack'},
+                        )
+                    tx = Transaction.objects.create(
+                        household=household, user=request.user,
+                        category=cat, transaction_type=Transaction.EXPENSE,
+                        amount=payment.amount, currency=payment.currency,
+                        description=f"Payment toward {liab.name}",
+                        payee=liab.lender or liab.name,
+                        date=payment.date,
+                        source=Transaction.SOURCE_MANUAL,
+                    )
+                    payment.transaction = tx
+                payment.save()
+                # Decrement the outstanding balance (clamp at 0)
+                new_balance = max(Decimal('0'), Decimal(liab.balance) - Decimal(payment.amount))
+                Liability.objects.filter(pk=liab.pk).update(balance=new_balance)
+            messages.success(request, f"Payment of {payment.amount} recorded.")
+            return redirect('debt_detail', pk=liab.pk)
+    else:
+        form = LiabilityPaymentForm(household=household, liability=liab,
+                                    initial={'date': timezone.now().date(),
+                                             'amount': liab.balance})
+    return render(request, 'budget_app/payment_form.html', {
+        'form': form, 'liability': liab,
+    })
+
+
+@login_required
+@ensure_household
+def payment_delete(request, pk, payment_pk):
+    household = get_user_household(request.user)
+    liab = get_object_or_404(Liability, pk=pk, household=household)
+    payment = get_object_or_404(LiabilityPayment, pk=payment_pk, liability=liab)
+    if request.method == 'POST':
+        with db_transaction.atomic():
+            # Restore the liability balance and delete the linked expense, if any
+            Liability.objects.filter(pk=liab.pk).update(
+                balance=Decimal(liab.balance) + Decimal(payment.amount)
+            )
+            if payment.transaction_id:
+                payment.transaction.delete()
+            payment.delete()
+        messages.info(request, "Payment removed and balance restored.")
+        return redirect('debt_detail', pk=liab.pk)
+    return render(request, 'budget_app/payment_confirm_delete.html', {
+        'liability': liab, 'payment': payment,
+    })
 
 
 @login_required
@@ -1140,24 +1306,460 @@ def import_csv(request):
 def forecast_view(request):
     household = get_user_household(request.user)
     f = forecast_end_of_month(household)
-
     today = timezone.now().date()
     month_start, _ = month_range(today)
-
-    # Per-day cumulative spending so far this month
-    daily_spending = []
-    cumulative = Decimal('0')
-    d = month_start
-    while d <= today:
-        day_total = Transaction.objects.filter(
-            household=household, transaction_type=Transaction.EXPENSE, date=d
-        ).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
-        cumulative += day_total
-        daily_spending.append({'date': d, 'cumulative': cumulative})
-        d += timedelta(days=1)
-
     return render(request, 'budget_app/forecast.html', {
         'forecast': f,
-        'daily_spending': daily_spending,
         'month_label': month_start.strftime('%B %Y'),
     })
+
+
+# ============================================================
+# MEETINGS & AGREEMENTS
+# ============================================================
+
+def _suggest_next_meeting_date(household):
+    """Default next meeting date: 3 months after the last one, else today."""
+    last = household.meetings.order_by('-meeting_date').first()
+    today = timezone.now().date()
+    if not last:
+        return today
+    # add 3 months
+    m = last.meeting_date.month - 1 + 3
+    year = last.meeting_date.year + m // 12
+    month = m % 12 + 1
+    from calendar import monthrange as _mr
+    day = min(last.meeting_date.day, _mr(year, month)[1])
+    return date(year, month, day)
+
+
+@login_required
+@ensure_household
+def meeting_list(request):
+    household = get_user_household(request.user)
+    meetings = household.meetings.prefetch_related('agreements', 'participants').all()
+    today = timezone.now().date()
+
+    # Aggregate open / overdue across all meetings
+    all_open = AgreementItem.objects.filter(
+        meeting__household=household
+    ).exclude(status__in=[AgreementItem.STATUS_DONE, AgreementItem.STATUS_CANCELLED])
+    overdue = all_open.filter(target_date__lt=today)
+
+    return render(request, 'budget_app/meeting_list.html', {
+        'meetings': meetings,
+        'open_count': all_open.count(),
+        'overdue_count': overdue.count(),
+        'next_suggested': _suggest_next_meeting_date(household),
+        'today': today,
+    })
+
+
+@login_required
+@ensure_household
+def meeting_create(request):
+    household = get_user_household(request.user)
+    if request.method == 'POST':
+        form = MeetingForm(request.POST, household=household)
+        if form.is_valid():
+            m = form.save(commit=False)
+            m.household = household
+            # Snapshot household state for context
+            today = timezone.now().date()
+            month_start, _ = month_range(today)
+            inc = Transaction.objects.filter(
+                household=household, transaction_type=Transaction.INCOME,
+                date__gte=month_start, date__lte=today
+            ).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
+            exp = Transaction.objects.filter(
+                household=household, transaction_type=Transaction.EXPENSE,
+                date__gte=month_start, date__lte=today
+            ).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
+            nw = compute_net_worth(household)
+            m.income_snapshot = inc
+            m.expense_snapshot = exp
+            m.net_worth_snapshot = nw['net_worth']
+            m.save()
+            form.save_m2m()
+            # Carry over open agreement items from the previous meeting, if asked
+            carried = 0
+            if form.cleaned_data.get('carry_over_open_items') and form._previous_meeting:
+                open_items = form._previous_meeting.agreements.exclude(
+                    status__in=[AgreementItem.STATUS_DONE, AgreementItem.STATUS_CANCELLED]
+                )
+                for src in open_items:
+                    AgreementItem.objects.create(
+                        meeting=m,
+                        title=src.title,
+                        description=src.description,
+                        owner=src.owner,
+                        target_date=src.target_date,
+                        status=src.status,
+                        progress=src.progress,
+                        priority=src.priority,
+                        notes=src.notes,
+                    )
+                    carried += 1
+            if carried:
+                messages.success(request, f"Meeting created. Carried over {carried} open item(s) from the previous meeting.")
+            else:
+                messages.success(request, "Meeting created.")
+            return redirect('meeting_detail', pk=m.pk)
+    else:
+        form = MeetingForm(household=household, initial={
+            'meeting_date': _suggest_next_meeting_date(household),
+            'title': f"Q{((_suggest_next_meeting_date(household).month - 1) // 3) + 1} "
+                     f"{_suggest_next_meeting_date(household).year} Review",
+        })
+    return render(request, 'budget_app/meeting_form.html', {
+        'form': form, 'title': 'Schedule a Meeting',
+    })
+
+
+@login_required
+@ensure_household
+def meeting_detail(request, pk):
+    household = get_user_household(request.user)
+    meeting = get_object_or_404(Meeting, pk=pk, household=household)
+    agreements = meeting.agreements.select_related('owner').all()
+    return render(request, 'budget_app/meeting_detail.html', {
+        'meeting': meeting,
+        'agreements': agreements,
+        'agreement_form': AgreementItemForm(household=household),
+        'today': timezone.now().date(),
+    })
+
+
+@login_required
+@ensure_household
+def meeting_edit(request, pk):
+    household = get_user_household(request.user)
+    meeting = get_object_or_404(Meeting, pk=pk, household=household)
+    if request.method == 'POST':
+        form = MeetingForm(request.POST, instance=meeting, household=household)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Meeting updated.")
+            return redirect('meeting_detail', pk=meeting.pk)
+    else:
+        form = MeetingForm(instance=meeting, household=household)
+    return render(request, 'budget_app/meeting_form.html', {
+        'form': form, 'title': 'Edit Meeting',
+    })
+
+
+@login_required
+@ensure_household
+def meeting_delete(request, pk):
+    household = get_user_household(request.user)
+    meeting = get_object_or_404(Meeting, pk=pk, household=household)
+    if request.method == 'POST':
+        meeting.delete()
+        messages.success(request, "Meeting deleted.")
+        return redirect('meeting_list')
+    return render(request, 'budget_app/meeting_confirm_delete.html', {'meeting': meeting})
+
+
+@login_required
+@ensure_household
+def agreement_create(request, pk):
+    household = get_user_household(request.user)
+    meeting = get_object_or_404(Meeting, pk=pk, household=household)
+    if request.method == 'POST':
+        form = AgreementItemForm(request.POST, household=household)
+        if form.is_valid():
+            item = form.save(commit=False)
+            item.meeting = meeting
+            if item.status == AgreementItem.STATUS_DONE and not item.completed_date:
+                item.completed_date = timezone.now().date()
+                item.progress = 100
+            item.save()
+            messages.success(request, "Agreement item added.")
+            return redirect('meeting_detail', pk=meeting.pk)
+    else:
+        form = AgreementItemForm(household=household)
+    return render(request, 'budget_app/agreement_form.html', {
+        'form': form, 'meeting': meeting, 'title': 'Add Action Item',
+    })
+
+
+@login_required
+@ensure_household
+def agreement_edit(request, pk, item_pk):
+    household = get_user_household(request.user)
+    meeting = get_object_or_404(Meeting, pk=pk, household=household)
+    item = get_object_or_404(AgreementItem, pk=item_pk, meeting=meeting)
+    if request.method == 'POST':
+        form = AgreementItemForm(request.POST, instance=item, household=household)
+        if form.is_valid():
+            saved = form.save(commit=False)
+            if saved.status == AgreementItem.STATUS_DONE and not saved.completed_date:
+                saved.completed_date = timezone.now().date()
+                saved.progress = 100
+            elif saved.status != AgreementItem.STATUS_DONE:
+                saved.completed_date = None
+            saved.save()
+            messages.success(request, "Agreement item updated.")
+            return redirect('meeting_detail', pk=meeting.pk)
+    else:
+        form = AgreementItemForm(instance=item, household=household)
+    return render(request, 'budget_app/agreement_form.html', {
+        'form': form, 'meeting': meeting, 'item': item, 'title': 'Edit Action Item',
+    })
+
+
+@login_required
+@ensure_household
+def agreement_delete(request, pk, item_pk):
+    household = get_user_household(request.user)
+    meeting = get_object_or_404(Meeting, pk=pk, household=household)
+    item = get_object_or_404(AgreementItem, pk=item_pk, meeting=meeting)
+    if request.method == 'POST':
+        item.delete()
+        messages.info(request, "Agreement item removed.")
+    return redirect('meeting_detail', pk=meeting.pk)
+
+
+@login_required
+@ensure_household
+def agreement_quick_update(request, pk, item_pk):
+    """Inline status/progress update from the detail page."""
+    household = get_user_household(request.user)
+    meeting = get_object_or_404(Meeting, pk=pk, household=household)
+    item = get_object_or_404(AgreementItem, pk=item_pk, meeting=meeting)
+    if request.method == 'POST':
+        new_status = request.POST.get('status')
+        new_progress = request.POST.get('progress')
+        if new_status in dict(AgreementItem.STATUS_CHOICES):
+            item.status = new_status
+        if new_progress is not None:
+            try:
+                p = max(0, min(100, int(new_progress)))
+                item.progress = p
+                if p == 100 and item.status != AgreementItem.STATUS_DONE:
+                    item.status = AgreementItem.STATUS_DONE
+            except (TypeError, ValueError):
+                pass
+        if item.status == AgreementItem.STATUS_DONE:
+            if not item.completed_date:
+                item.completed_date = timezone.now().date()
+            item.progress = 100
+        else:
+            item.completed_date = None
+        item.save()
+    return redirect('meeting_detail', pk=meeting.pk)
+
+
+# ============================================================
+# SAVINGS GOALS
+# ============================================================
+
+@login_required
+@ensure_household
+def goal_list(request):
+    household = get_user_household(request.user)
+    goals = household.goals.select_related('currency').all()
+    return render(request, 'budget_app/goal_list.html', {'goals': goals})
+
+
+@login_required
+@ensure_household
+def goal_create(request):
+    household = get_user_household(request.user)
+    if request.method == 'POST':
+        form = GoalForm(request.POST, household=household)
+        if form.is_valid():
+            g = form.save(commit=False)
+            g.household = household
+            if not g.currency:
+                g.currency = household.base_currency
+            g.save()
+            messages.success(request, "Goal created.")
+            return redirect('goal_detail', pk=g.pk)
+    else:
+        form = GoalForm(household=household,
+                        initial={'currency': household.base_currency})
+    return render(request, 'budget_app/goal_form.html', {
+        'form': form, 'title': 'New Savings Goal',
+    })
+
+
+@login_required
+@ensure_household
+def goal_detail(request, pk):
+    household = get_user_household(request.user)
+    goal = get_object_or_404(Goal, pk=pk, household=household)
+    contributions = goal.contributions.select_related('user').all()
+    return render(request, 'budget_app/goal_detail.html', {
+        'goal': goal, 'contributions': contributions,
+    })
+
+
+@login_required
+@ensure_household
+def goal_edit(request, pk):
+    household = get_user_household(request.user)
+    goal = get_object_or_404(Goal, pk=pk, household=household)
+    if request.method == 'POST':
+        form = GoalForm(request.POST, instance=goal, household=household)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Goal updated.")
+            return redirect('goal_detail', pk=goal.pk)
+    else:
+        form = GoalForm(instance=goal, household=household)
+    return render(request, 'budget_app/goal_form.html', {
+        'form': form, 'title': 'Edit Goal',
+    })
+
+
+@login_required
+@ensure_household
+def goal_delete(request, pk):
+    household = get_user_household(request.user)
+    goal = get_object_or_404(Goal, pk=pk, household=household)
+    if request.method == 'POST':
+        goal.delete()
+        messages.info(request, "Goal removed.")
+        return redirect('goal_list')
+    return render(request, 'budget_app/goal_confirm_delete.html', {'goal': goal})
+
+
+@login_required
+@ensure_household
+def goal_contribute(request, pk):
+    household = get_user_household(request.user)
+    goal = get_object_or_404(Goal, pk=pk, household=household)
+    if request.method == 'POST':
+        form = GoalContributionForm(request.POST)
+        if form.is_valid():
+            with db_transaction.atomic():
+                contrib = form.save(commit=False)
+                contrib.goal = goal
+                contrib.user = request.user
+                if form.cleaned_data.get('record_as_expense'):
+                    cat, _ = Category.objects.get_or_create(
+                        household=household, name='Savings',
+                        category_type=Category.EXPENSE,
+                        defaults={'color': '#0d6efd', 'icon': 'bi-piggy-bank'},
+                    )
+                    tx = Transaction.objects.create(
+                        household=household, user=request.user,
+                        category=cat, transaction_type=Transaction.EXPENSE,
+                        amount=contrib.amount,
+                        currency=goal.currency or household.base_currency,
+                        description=f"Contribution to {goal.name}",
+                        payee=goal.name, date=contrib.date,
+                        source=Transaction.SOURCE_MANUAL,
+                    )
+                    contrib.transaction = tx
+                contrib.save()
+                # Bump goal's current_amount
+                Goal.objects.filter(pk=goal.pk).update(
+                    current_amount=Decimal(goal.current_amount) + Decimal(contrib.amount)
+                )
+                goal.refresh_from_db()
+                # Auto-flip to achieved
+                if goal.current_amount >= goal.target_amount and goal.status == Goal.STATUS_ACTIVE:
+                    goal.status = Goal.STATUS_ACHIEVED
+                    goal.save(update_fields=['status'])
+            messages.success(request, f"Added {contrib.amount} to {goal.name}.")
+            return redirect('goal_detail', pk=goal.pk)
+    else:
+        form = GoalContributionForm(initial={'date': timezone.now().date()})
+    return render(request, 'budget_app/goal_contribute_form.html', {
+        'form': form, 'goal': goal,
+    })
+
+
+@login_required
+@ensure_household
+def goal_contribution_delete(request, pk, contrib_pk):
+    household = get_user_household(request.user)
+    goal = get_object_or_404(Goal, pk=pk, household=household)
+    contrib = get_object_or_404(GoalContribution, pk=contrib_pk, goal=goal)
+    if request.method == 'POST':
+        with db_transaction.atomic():
+            Goal.objects.filter(pk=goal.pk).update(
+                current_amount=Decimal(goal.current_amount) - Decimal(contrib.amount)
+            )
+            if contrib.transaction_id:
+                contrib.transaction.delete()
+            contrib.delete()
+        messages.info(request, "Contribution removed.")
+    return redirect('goal_detail', pk=goal.pk)
+
+
+# ============================================================
+# PROJECTS
+# ============================================================
+
+@login_required
+@ensure_household
+def project_list(request):
+    household = get_user_household(request.user)
+    projects = household.projects.select_related('currency').all()
+    return render(request, 'budget_app/project_list.html', {'projects': projects})
+
+
+@login_required
+@ensure_household
+def project_create(request):
+    household = get_user_household(request.user)
+    if request.method == 'POST':
+        form = ProjectForm(request.POST, household=household)
+        if form.is_valid():
+            p = form.save(commit=False)
+            p.household = household
+            if not p.currency:
+                p.currency = household.base_currency
+            p.save()
+            messages.success(request, "Project created.")
+            return redirect('project_detail', pk=p.pk)
+    else:
+        form = ProjectForm(household=household,
+                           initial={'currency': household.base_currency})
+    return render(request, 'budget_app/project_form.html', {
+        'form': form, 'title': 'New Project',
+    })
+
+
+@login_required
+@ensure_household
+def project_detail(request, pk):
+    household = get_user_household(request.user)
+    project = get_object_or_404(Project, pk=pk, household=household)
+    transactions = project.transactions.select_related('user', 'category', 'currency')[:200]
+    return render(request, 'budget_app/project_detail.html', {
+        'project': project, 'transactions': transactions,
+    })
+
+
+@login_required
+@ensure_household
+def project_edit(request, pk):
+    household = get_user_household(request.user)
+    project = get_object_or_404(Project, pk=pk, household=household)
+    if request.method == 'POST':
+        form = ProjectForm(request.POST, instance=project, household=household)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Project updated.")
+            return redirect('project_detail', pk=project.pk)
+    else:
+        form = ProjectForm(instance=project, household=household)
+    return render(request, 'budget_app/project_form.html', {
+        'form': form, 'title': 'Edit Project',
+    })
+
+
+@login_required
+@ensure_household
+def project_delete(request, pk):
+    household = get_user_household(request.user)
+    project = get_object_or_404(Project, pk=pk, household=household)
+    if request.method == 'POST':
+        project.delete()
+        messages.info(request, "Project removed.")
+        return redirect('project_list')
+    return render(request, 'budget_app/project_confirm_delete.html', {'project': project})

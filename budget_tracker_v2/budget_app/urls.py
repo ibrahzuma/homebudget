@@ -57,9 +57,16 @@ urlpatterns = [
     path('assets/new/', views.asset_create, name='asset_create'),
     path('assets/<int:pk>/edit/', views.asset_edit, name='asset_edit'),
     path('assets/<int:pk>/delete/', views.asset_delete, name='asset_delete'),
-    path('liabilities/new/', views.liability_create, name='liability_create'),
-    path('liabilities/<int:pk>/edit/', views.liability_edit, name='liability_edit'),
-    path('liabilities/<int:pk>/delete/', views.liability_delete, name='liability_delete'),
+
+    # Debts (Liabilities + payments)
+    path('debts/', views.debt_list, name='debt_list'),
+    path('debts/new/', views.liability_create, name='liability_create'),
+    path('debts/<int:pk>/', views.debt_detail, name='debt_detail'),
+    path('debts/<int:pk>/edit/', views.liability_edit, name='liability_edit'),
+    path('debts/<int:pk>/delete/', views.liability_delete, name='liability_delete'),
+    path('debts/<int:pk>/payments/new/', views.payment_create, name='payment_create'),
+    path('debts/<int:pk>/payments/<int:payment_pk>/delete/',
+         views.payment_delete, name='payment_delete'),
 
     # Currencies
     path('currencies/', views.currency_list, name='currency_list'),
@@ -72,4 +79,32 @@ urlpatterns = [
 
     # Forecast
     path('forecast/', views.forecast_view, name='forecast'),
+
+    # Savings goals
+    path('goals/', views.goal_list, name='goal_list'),
+    path('goals/new/', views.goal_create, name='goal_create'),
+    path('goals/<int:pk>/', views.goal_detail, name='goal_detail'),
+    path('goals/<int:pk>/edit/', views.goal_edit, name='goal_edit'),
+    path('goals/<int:pk>/delete/', views.goal_delete, name='goal_delete'),
+    path('goals/<int:pk>/contribute/', views.goal_contribute, name='goal_contribute'),
+    path('goals/<int:pk>/contributions/<int:contrib_pk>/delete/',
+         views.goal_contribution_delete, name='goal_contribution_delete'),
+
+    # Projects
+    path('projects/', views.project_list, name='project_list'),
+    path('projects/new/', views.project_create, name='project_create'),
+    path('projects/<int:pk>/', views.project_detail, name='project_detail'),
+    path('projects/<int:pk>/edit/', views.project_edit, name='project_edit'),
+    path('projects/<int:pk>/delete/', views.project_delete, name='project_delete'),
+
+    # Meetings & agreements
+    path('meetings/', views.meeting_list, name='meeting_list'),
+    path('meetings/new/', views.meeting_create, name='meeting_create'),
+    path('meetings/<int:pk>/', views.meeting_detail, name='meeting_detail'),
+    path('meetings/<int:pk>/edit/', views.meeting_edit, name='meeting_edit'),
+    path('meetings/<int:pk>/delete/', views.meeting_delete, name='meeting_delete'),
+    path('meetings/<int:pk>/items/new/', views.agreement_create, name='agreement_create'),
+    path('meetings/<int:pk>/items/<int:item_pk>/edit/', views.agreement_edit, name='agreement_edit'),
+    path('meetings/<int:pk>/items/<int:item_pk>/delete/', views.agreement_delete, name='agreement_delete'),
+    path('meetings/<int:pk>/items/<int:item_pk>/quick/', views.agreement_quick_update, name='agreement_quick_update'),
 ]

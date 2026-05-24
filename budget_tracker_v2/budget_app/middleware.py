@@ -2,7 +2,7 @@
 from django.utils import timezone
 from datetime import timedelta
 
-from .services import apply_due_recurring, check_budget_alerts
+from .services import apply_due_recurring, check_budget_alerts, check_upcoming_meeting_alerts
 
 
 class AutoApplyRecurringMiddleware:
@@ -23,6 +23,7 @@ class AutoApplyRecurringMiddleware:
                     try:
                         apply_due_recurring(household=household)
                         check_budget_alerts(household)
+                        check_upcoming_meeting_alerts(household)
                     except Exception:
                         pass  # never break the request because of background work
                 request.session[self.SESSION_KEY] = today_str

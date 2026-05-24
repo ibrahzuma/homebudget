@@ -1,26 +1,348 @@
-{% extends 'budget_app/base.html' %}
-{% block title %}Sign Up{% endblock %}
-{% block content %}
-<div class="row justify-content-center mt-4">
-    <div class="col-md-6 col-lg-5">
-        <div class="card p-4 mt-4">
-            <h3 class="text-center mb-4"><i class="bi bi-person-plus text-primary"></i> Create Account</h3>
-            <form method="post">
-                {% csrf_token %}
-                {% for field in form %}
-                    <div class="mb-3">
-                        <label class="form-label">{{ field.label }}</label>
-                        {{ field }}
-                        {% if field.help_text %}<small class="text-muted">{{ field.help_text }}</small>{% endif %}
-                        {% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
-                    </div>
-                {% endfor %}
-                <button type="submit" class="btn btn-primary w-100">Create Account</button>
-            </form>
-            <p class="text-center mt-3 mb-0">
-                Already have an account? <a href="{% url 'login' %}">Login</a>
-            </p>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign Up &middot; Home Budget Tracker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        :root {
+            --brand-1: #1e293b;
+            --brand-2: #3b82f6;
+            --brand-3: #0ea5e9;
+        }
+        html, body { height: 100%; }
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f7fb;
+            color: #0f172a;
+        }
+        .auth-wrap {
+            min-height: 100vh;
+            display: grid;
+            grid-template-columns: 1.05fr 1fr;
+        }
+
+        .auth-brand {
+            position: relative;
+            color: white;
+            padding: 3rem 3.5rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            background:
+                radial-gradient(1200px 600px at -10% -20%, rgba(56,189,248,0.35), transparent 60%),
+                radial-gradient(900px 500px at 110% 110%, rgba(168,85,247,0.25), transparent 60%),
+                linear-gradient(135deg, var(--brand-1) 0%, #0b1220 100%);
+            overflow: hidden;
+        }
+        .auth-brand::after {
+            content: '';
+            position: absolute; inset: 0;
+            background-image: radial-gradient(rgba(255,255,255,0.06) 1px, transparent 1px);
+            background-size: 28px 28px;
+            opacity: 0.6;
+            pointer-events: none;
+        }
+        .auth-brand > * { position: relative; z-index: 1; }
+
+        .brand-logo {
+            font-size: 1.15rem;
+            font-weight: 600;
+            display: flex; align-items: center; gap: 0.6rem;
+        }
+        .brand-logo .logo-mark {
+            width: 38px; height: 38px;
+            border-radius: 10px;
+            background: linear-gradient(135deg, var(--brand-2), var(--brand-3));
+            display: grid; place-items: center;
+            box-shadow: 0 8px 20px -8px rgba(59,130,246,0.6);
+        }
+        .brand-logo .logo-mark i { font-size: 1.2rem; }
+
+        .hero h1 {
+            font-size: 2.4rem;
+            font-weight: 700;
+            line-height: 1.1;
+            margin-bottom: 1rem;
+        }
+        .hero p {
+            font-size: 1.05rem;
+            color: rgba(255,255,255,0.7);
+            max-width: 28rem;
+            line-height: 1.6;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem 1.5rem;
+            margin-top: 2.5rem;
+            max-width: 32rem;
+        }
+        .feature {
+            display: flex; align-items: flex-start; gap: 0.75rem;
+            color: rgba(255,255,255,0.85);
+        }
+        .feature-ico {
+            flex: 0 0 36px; height: 36px;
+            border-radius: 9px;
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.1);
+            display: grid; place-items: center;
+            color: #93c5fd;
+            font-size: 1rem;
+        }
+        .feature strong { display: block; font-size: 0.92rem; color: white; margin-bottom: 0.1rem; }
+        .feature span { font-size: 0.82rem; color: rgba(255,255,255,0.6); line-height: 1.4; }
+
+        .brand-foot { font-size: 0.8rem; color: rgba(255,255,255,0.5); }
+
+        .auth-form {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+        .auth-card {
+            width: 100%;
+            max-width: 460px;
+        }
+        .auth-card h2 { font-size: 1.75rem; font-weight: 700; margin-bottom: 0.4rem; }
+        .auth-card .subtitle { color: #64748b; margin-bottom: 1.75rem; }
+        .auth-card label {
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: #334155;
+            margin-bottom: 0.4rem;
+        }
+        .auth-card .form-control {
+            padding: 0.7rem 0.95rem;
+            border-radius: 10px;
+            border: 1px solid #e2e8f0;
+            font-size: 0.95rem;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        .auth-card .form-control:focus {
+            border-color: var(--brand-2);
+            box-shadow: 0 0 0 4px rgba(59,130,246,0.12);
+        }
+        .auth-card .input-icon { position: relative; }
+        .auth-card .input-icon > i {
+            position: absolute;
+            left: 0.85rem; top: 0.85rem;
+            color: #94a3b8;
+            font-size: 1rem;
+            pointer-events: none;
+        }
+        .auth-card .input-icon .form-control { padding-left: 2.4rem; }
+        .auth-card .password-toggle {
+            position: absolute;
+            right: 0.75rem; top: 0.6rem;
+            background: transparent;
+            border: 0;
+            color: #94a3b8;
+            cursor: pointer;
+            padding: 0.25rem;
+        }
+        .auth-card .password-toggle:hover { color: #475569; }
+
+        .auth-card .field-help {
+            display: block;
+            font-size: 0.78rem;
+            color: #94a3b8;
+            margin-top: 0.35rem;
+        }
+        .auth-card .field-error {
+            font-size: 0.78rem;
+            color: #b91c1c;
+            margin-top: 0.35rem;
+        }
+
+        .auth-card .submit-btn {
+            width: 100%;
+            padding: 0.8rem 1rem;
+            border-radius: 10px;
+            background: linear-gradient(135deg, var(--brand-2), var(--brand-3));
+            color: white;
+            border: 0;
+            font-weight: 600;
+            font-size: 0.95rem;
+            box-shadow: 0 8px 20px -10px rgba(59,130,246,0.6);
+            transition: transform 0.05s, box-shadow 0.15s;
+            margin-top: 0.25rem;
+        }
+        .auth-card .submit-btn:hover {
+            box-shadow: 0 12px 28px -10px rgba(59,130,246,0.7);
+        }
+        .auth-card .submit-btn:active { transform: translateY(1px); }
+
+        .auth-card .alert-error {
+            background: #fef2f2;
+            color: #b91c1c;
+            border: 1px solid #fecaca;
+            border-radius: 10px;
+            padding: 0.7rem 0.9rem;
+            font-size: 0.88rem;
+            margin-bottom: 1.25rem;
+            display: flex; align-items: flex-start; gap: 0.5rem;
+        }
+        .auth-card .alert-error ul { margin: 0; padding-left: 1.1rem; }
+
+        .auth-card .login-link {
+            text-align: center;
+            margin-top: 1.25rem;
+            color: #64748b;
+            font-size: 0.9rem;
+        }
+        .auth-card .login-link a {
+            color: var(--brand-2);
+            font-weight: 600;
+            text-decoration: none;
+        }
+        .auth-card .login-link a:hover { text-decoration: underline; }
+
+        @media (max-width: 900px) {
+            .auth-wrap { grid-template-columns: 1fr; }
+            .auth-brand { padding: 2rem 1.5rem; min-height: auto; }
+            .hero h1 { font-size: 1.8rem; }
+            .feature-grid { display: none; }
+            .brand-foot { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="auth-wrap">
+    <aside class="auth-brand">
+        <div class="brand-logo">
+            <span class="logo-mark"><i class="bi bi-piggy-bank-fill"></i></span>
+            <span>Home Budget</span>
         </div>
-    </div>
+
+        <div class="hero">
+            <h1>Start tracking your household finances in minutes.</h1>
+            <p>Create your account, set up your household, and invite your partner — then keep every income, expense, and bill in one shared place.</p>
+
+            <div class="feature-grid">
+                <div class="feature">
+                    <div class="feature-ico"><i class="bi bi-shield-check"></i></div>
+                    <div>
+                        <strong>Private by default</strong>
+                        <span>Your data stays in your household</span>
+                    </div>
+                </div>
+                <div class="feature">
+                    <div class="feature-ico"><i class="bi bi-currency-exchange"></i></div>
+                    <div>
+                        <strong>Multi-currency</strong>
+                        <span>Aggregated in your base currency</span>
+                    </div>
+                </div>
+                <div class="feature">
+                    <div class="feature-ico"><i class="bi bi-bell"></i></div>
+                    <div>
+                        <strong>Smart alerts</strong>
+                        <span>Know before budgets break</span>
+                    </div>
+                </div>
+                <div class="feature">
+                    <div class="feature-ico"><i class="bi bi-cloud-arrow-up"></i></div>
+                    <div>
+                        <strong>CSV import / export</strong>
+                        <span>Bring your history with you</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="brand-foot">&copy; Home Budget &middot; A private space for shared finances</div>
+    </aside>
+
+    <main class="auth-form">
+        <div class="auth-card">
+            <h2>Create your account</h2>
+            <p class="subtitle">Free, takes about a minute.</p>
+
+            {% if form.non_field_errors %}
+            <div class="alert-error">
+                <i class="bi bi-exclamation-circle-fill mt-1"></i>
+                <div>{{ form.non_field_errors }}</div>
+            </div>
+            {% endif %}
+
+            <form method="post" novalidate>
+                {% csrf_token %}
+
+                <div class="mb-3">
+                    <label for="id_username">Username</label>
+                    <div class="input-icon">
+                        <i class="bi bi-person"></i>
+                        <input id="id_username" type="text" name="username"
+                               value="{{ form.username.value|default:'' }}"
+                               class="form-control" placeholder="Pick a username"
+                               required autofocus autocomplete="username">
+                    </div>
+                    {% if form.username.errors %}<div class="field-error">{{ form.username.errors|join:" " }}</div>{% endif %}
+                    {% if form.username.help_text %}<span class="field-help">{{ form.username.help_text|safe }}</span>{% endif %}
+                </div>
+
+                <div class="mb-3">
+                    <label for="id_email">Email</label>
+                    <div class="input-icon">
+                        <i class="bi bi-envelope"></i>
+                        <input id="id_email" type="email" name="email"
+                               value="{{ form.email.value|default:'' }}"
+                               class="form-control" placeholder="you@example.com"
+                               required autocomplete="email">
+                    </div>
+                    {% if form.email.errors %}<div class="field-error">{{ form.email.errors|join:" " }}</div>{% endif %}
+                </div>
+
+                <div class="mb-3">
+                    <label for="id_password1">Password</label>
+                    <div class="input-icon">
+                        <i class="bi bi-lock"></i>
+                        <input id="id_password1" type="password" name="password1"
+                               class="form-control" placeholder="At least 8 characters"
+                               required autocomplete="new-password">
+                        <button type="button" class="password-toggle" aria-label="Show password"
+                                onclick="(function(b){var i=document.getElementById('id_password1');var s=i.type==='password';i.type=s?'text':'password';b.firstElementChild.className=s?'bi bi-eye-slash':'bi bi-eye';})(this)">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                    </div>
+                    {% if form.password1.errors %}<div class="field-error">{{ form.password1.errors|join:" " }}</div>{% endif %}
+                    {% if form.password1.help_text %}<span class="field-help">{{ form.password1.help_text|safe }}</span>{% endif %}
+                </div>
+
+                <div class="mb-3">
+                    <label for="id_password2">Confirm password</label>
+                    <div class="input-icon">
+                        <i class="bi bi-lock-fill"></i>
+                        <input id="id_password2" type="password" name="password2"
+                               class="form-control" placeholder="Re-enter your password"
+                               required autocomplete="new-password">
+                        <button type="button" class="password-toggle" aria-label="Show password"
+                                onclick="(function(b){var i=document.getElementById('id_password2');var s=i.type==='password';i.type=s?'text':'password';b.firstElementChild.className=s?'bi bi-eye-slash':'bi bi-eye';})(this)">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                    </div>
+                    {% if form.password2.errors %}<div class="field-error">{{ form.password2.errors|join:" " }}</div>{% endif %}
+                </div>
+
+                <button type="submit" class="submit-btn">
+                    <i class="bi bi-person-plus me-1"></i> Create account
+                </button>
+            </form>
+
+            <div class="login-link">
+                Already have an account? <a href="{% url 'login' %}">Sign in</a>
+            </div>
+        </div>
+    </main>
 </div>
-{% endblock %}
+
+</body>
+</html>

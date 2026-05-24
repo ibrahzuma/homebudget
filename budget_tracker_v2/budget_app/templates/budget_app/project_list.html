@@ -1,0 +1,70 @@
+{% extends 'budget_app/base.html' %}
+{% load humanize %}
+{% block title %}Projects{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <div>
+        <h2 class="mb-0"><i class="bi bi-bookmark-star text-primary"></i> Projects</h2>
+        <small class="text-muted">Budget envelopes spanning multiple categories &mdash; trips, repairs, big buys.</small>
+    </div>
+    <a href="{% url 'project_create' %}" class="btn btn-primary"><i class="bi bi-plus-lg"></i> New Project</a>
+</div>
+
+<div class="row g-3">
+    {% for p in projects %}
+    <div class="col-lg-6">
+        <div class="card p-4 h-100">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <h5 class="mb-1">
+                        <i class="bi {{ p.icon }}" style="color: {{ p.color }}"></i>
+                        <a href="{% url 'project_detail' p.pk %}" class="text-decoration-none">{{ p.name }}</a>
+                    </h5>
+                    <small class="text-muted">
+                        {% if p.status == 'active' %}<span class="badge bg-success">Active</span>
+                        {% elif p.status == 'planning' %}<span class="badge bg-info">Planning</span>
+                        {% elif p.status == 'completed' %}<span class="badge bg-secondary">Completed</span>
+                        {% else %}<span class="badge bg-dark">Cancelled</span>{% endif %}
+                        {% if p.end_date %} &middot; by {{ p.end_date|date:"M Y" }}{% endif %}
+                    </small>
+                </div>
+                <div class="text-end small text-muted">
+                    {% if p.budget %}
+                        {{ p.currency.symbol|default:currency_symbol }}{{ p.spent|floatformat:0|intcomma }}<br>
+                        of {{ p.currency.symbol|default:currency_symbol }}{{ p.budget|floatformat:0|intcomma }}
+                    {% else %}
+                        {{ p.currency.symbol|default:currency_symbol }}{{ p.spent|floatformat:0|intcomma }} spent
+                    {% endif %}
+                </div>
+            </div>
+            {% if p.description %}<p class="small text-muted mt-2 mb-2">{{ p.description|truncatechars:140 }}</p>{% endif %}
+
+            {% if p.budget %}
+            <div class="mt-2">
+                <div class="progress" style="height: 10px;">
+                    <div class="progress-bar {% if p.is_over_budget %}bg-danger{% else %}bg-success{% endif %}"
+                         style="width: {{ p.progress_percent }}%; background-color: {{ p.color }};"></div>
+                </div>
+                <small class="{% if p.is_over_budget %}text-danger fw-bold{% else %}text-muted{% endif %}">
+                    {% if p.is_over_budget %}Over budget &middot; {% endif %}{{ p.progress_percent }}% used
+                </small>
+            </div>
+            {% endif %}
+
+            <div class="mt-3"><a href="{% url 'project_detail' p.pk %}" class="btn btn-sm btn-outline-primary">Open</a></div>
+        </div>
+    </div>
+    {% empty %}
+    <div class="col-12">
+        <div class="card p-5 text-center">
+            <i class="bi bi-bookmark-star display-5 text-muted mb-3"></i>
+            <h5>No projects yet</h5>
+            <p class="text-muted">Create a project envelope to track related expenses across categories.</p>
+            <div><a href="{% url 'project_create' %}" class="btn btn-primary"><i class="bi bi-plus-lg"></i> Add your first project</a></div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+{% endblock %}

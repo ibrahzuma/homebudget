@@ -1,0 +1,159 @@
+{% extends 'budget_app/base.html' %}
+{% load humanize %}
+{% block title %}{{ meeting.title }}{% endblock %}
+{% block content %}
+
+<nav class="mb-3 small">
+    <a href="{% url 'meeting_list' %}" class="text-decoration-none"><i class="bi bi-chevron-left"></i> All meetings</a>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-2">
+    <div>
+        <h2 class="mb-1">{{ meeting.title }}</h2>
+        <div class="text-muted">
+            <i class="bi bi-calendar"></i> {{ meeting.meeting_date|date:"l, M d, Y" }}
+            &middot;
+            {% if meeting.status == 'held' %}<span class="badge bg-success">Held</span>
+            {% elif meeting.status == 'cancelled' %}<span class="badge bg-secondary">Cancelled</span>
+            {% else %}<span class="badge bg-info">Planned</span>{% endif %}
+            &middot;
+            {% for p in meeting.participants.all %}<i class="bi bi-person-circle"></i> {{ p.username }}{% if not forloop.last %} &middot; {% endif %}{% endfor %}
+        </div>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{% url 'meeting_edit' meeting.pk %}" class="btn btn-outline-secondary"><i class="bi bi-pencil"></i> Edit</a>
+        <a href="{% url 'meeting_delete' meeting.pk %}" class="btn btn-outline-danger"><i class="bi bi-trash"></i></a>
+    </div>
+</div>
+
+<!-- Progress + snapshot -->
+<div class="row g-3 mb-4">
+    <div class="col-md-6">
+        <div class="card p-4 h-100">
+            <div class="d-flex justify-content-between mb-2">
+                <h5 class="mb-0"><i class="bi bi-bullseye"></i> Agreement Progress</h5>
+                <span class="text-muted small">{{ meeting.done_count }} of {{ agreements|length }} done</span>
+            </div>
+            <div class="progress mt-2" style="height:14px;">
+                <div class="progress-bar bg-success" style="width: {{ meeting.progress_percent }}%">{{ meeting.progress_percent }}%</div>
+            </div>
+            {% if meeting.open_count %}
+            <p class="small text-muted mb-0 mt-2">{{ meeting.open_count }} item{{ meeting.open_count|pluralize }} still open.</p>
+            {% else %}
+            {% if agreements %}<p class="small text-success mb-0 mt-2"><i class="bi bi-check-circle"></i> All agreements resolved.</p>{% endif %}
+            {% endif %}
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card p-4 h-100">
+            <h5 class="mb-3"><i class="bi bi-cash-stack"></i> Snapshot at meeting time</h5>
+            <div class="row g-2 small">
+                <div class="col-4">
+                    <div class="text-muted">Income (MTD)</div>
+                    <div class="fw-bold text-success">{{ currency_symbol }}{{ meeting.income_snapshot|default:0|floatformat:2|intcomma }}</div>
+                </div>
+                <div class="col-4">
+                    <div class="text-muted">Expense (MTD)</div>
+                    <div class="fw-bold text-danger">{{ currency_symbol }}{{ meeting.expense_snapshot|default:0|floatformat:2|intcomma }}</div>
+                </div>
+                <div class="col-4">
+                    <div class="text-muted">Net worth</div>
+                    <div class="fw-bold">{{ currency_symbol }}{{ meeting.net_worth_snapshot|default:0|floatformat:2|intcomma }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Agenda + minutes -->
+<div class="row g-3 mb-4">
+    {% if meeting.agenda %}
+    <div class="col-md-6">
+        <div class="card p-4 h-100">
+            <h5 class="mb-3"><i class="bi bi-list-check"></i> Agenda</h5>
+            <p class="mb-0">{{ meeting.agenda|linebreaksbr }}</p>
+        </div>
+    </div>
+    {% endif %}
+    {% if meeting.minutes %}
+    <div class="col-md-6">
+        <div class="card p-4 h-100">
+            <h5 class="mb-3"><i class="bi bi-journal-text"></i> Minutes</h5>
+            <p class="mb-0">{{ meeting.minutes|linebreaksbr }}</p>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Agreement items -->
+<div class="card p-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="mb-0"><i class="bi bi-check2-square"></i> Action Items &amp; Agreements</h5>
+        <a href="{% url 'agreement_create' meeting.pk %}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> Add Item</a>
+    </div>
+
+    {% if agreements %}
+    <div class="table-responsive scroll-table" style="max-height: 540px;">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Item</th>
+                    <th>Owner</th>
+                    <th>Target</th>
+                    <th style="min-width:160px;">Progress</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in agreements %}
+                <tr>
+                    <td>
+                        <strong>{{ item.title }}</strong>
+                        {% if item.priority == 'high' %}<span class="badge bg-danger ms-1">High</span>
+                        {% elif item.priority == 'low' %}<span class="badge bg-light text-muted ms-1">Low</span>{% endif %}
+                        {% if item.description %}<div class="small text-muted">{{ item.description|truncatechars:100 }}</div>{% endif %}
+                    </td>
+                    <td><small>{% if item.owner %}<i class="bi bi-person-circle"></i> {{ item.owner.username }}{% else %}<span class="text-muted">&mdash;</span>{% endif %}</small></td>
+                    <td>
+                        {% if item.target_date %}
+                            <small>{{ item.target_date|date:"M d, Y" }}</small>
+                            {% if item.is_overdue %}<span class="badge bg-danger ms-1">Overdue</span>{% endif %}
+                        {% else %}<small class="text-muted">&mdash;</small>{% endif %}
+                    </td>
+                    <td>
+                        <form method="post" action="{% url 'agreement_quick_update' meeting.pk item.pk %}" class="d-flex gap-2 align-items-center">
+                            {% csrf_token %}
+                            <input type="range" min="0" max="100" step="5" name="progress" value="{{ item.progress }}" onchange="this.form.submit()" class="form-range" style="min-width:100px;">
+                            <small class="text-muted" style="min-width:36px;">{{ item.progress }}%</small>
+                        </form>
+                    </td>
+                    <td>
+                        <form method="post" action="{% url 'agreement_quick_update' meeting.pk item.pk %}">
+                            {% csrf_token %}
+                            <select name="status" onchange="this.form.submit()" class="form-select form-select-sm">
+                                <option value="open" {% if item.status == 'open' %}selected{% endif %}>Open</option>
+                                <option value="in_progress" {% if item.status == 'in_progress' %}selected{% endif %}>In progress</option>
+                                <option value="done" {% if item.status == 'done' %}selected{% endif %}>Done</option>
+                                <option value="cancelled" {% if item.status == 'cancelled' %}selected{% endif %}>Cancelled</option>
+                            </select>
+                        </form>
+                    </td>
+                    <td class="text-end">
+                        <a href="{% url 'agreement_edit' meeting.pk item.pk %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-pencil"></i></a>
+                        <form method="post" action="{% url 'agreement_delete' meeting.pk item.pk %}" class="d-inline" onsubmit="return confirm('Remove this item?');">
+                            {% csrf_token %}
+                            <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="text-muted mb-0">No action items yet. <a href="{% url 'agreement_create' meeting.pk %}">Add the first one</a>.</p>
+    {% endif %}
+</div>
+
+{% endblock %}

@@ -1,4 +1,5 @@
 {% extends 'budget_app/base.html' %}
+{% load humanize %}
 {% block title %}Dashboard{% endblock %}
 {% block content %}
 
@@ -30,7 +31,7 @@
                 </div>
                 <div>
                     <small class="text-muted">Income</small>
-                    <div class="stat-value text-success">{{ currency_symbol }}{{ total_income|floatformat:2 }}</div>
+                    <div class="stat-value text-success">{{ currency_symbol }}{{ total_income|floatformat:2|intcomma }}</div>
                 </div>
             </div>
         </div>
@@ -43,7 +44,7 @@
                 </div>
                 <div>
                     <small class="text-muted">Expenses</small>
-                    <div class="stat-value text-danger">{{ currency_symbol }}{{ total_expense|floatformat:2 }}</div>
+                    <div class="stat-value text-danger">{{ currency_symbol }}{{ total_expense|floatformat:2|intcomma }}</div>
                 </div>
             </div>
         </div>
@@ -57,7 +58,7 @@
                 <div>
                     <small class="text-muted">Balance</small>
                     <div class="stat-value {% if balance < 0 %}text-danger{% else %}text-primary{% endif %}">
-                        {{ currency_symbol }}{{ balance|floatformat:2 }}
+                        {{ currency_symbol }}{{ balance|floatformat:2|intcomma }}
                     </div>
                 </div>
             </div>
@@ -72,7 +73,7 @@
                 <div>
                     <small class="text-muted">Net Worth</small>
                     <div class="stat-value {% if networth.net_worth < 0 %}text-danger{% else %}text-info{% endif %}">
-                        {{ currency_symbol }}{{ networth.net_worth|floatformat:2 }}
+                        {{ currency_symbol }}{{ networth.net_worth|floatformat:2|intcomma }}
                     </div>
                 </div>
             </div>
@@ -96,58 +97,110 @@
         </div>
         <div class="col-md-3 col-6">
             <small class="text-muted d-block">Daily burn rate</small>
-            <strong class="text-danger">{{ currency_symbol }}{{ forecast.daily_burn|floatformat:2 }}</strong>
+            <strong class="text-danger">{{ currency_symbol }}{{ forecast.daily_burn|floatformat:2|intcomma }}</strong>
         </div>
         <div class="col-md-3 col-6">
             <small class="text-muted d-block">Projected expenses</small>
-            <strong>{{ currency_symbol }}{{ forecast.projected_expense|floatformat:2 }}</strong>
+            <strong>{{ currency_symbol }}{{ forecast.projected_expense|floatformat:2|intcomma }}</strong>
         </div>
         <div class="col-md-3 col-6">
             <small class="text-muted d-block">Projected balance</small>
             <strong class="{% if forecast.projected_balance < 0 %}text-danger{% else %}text-success{% endif %}">
-                {{ currency_symbol }}{{ forecast.projected_balance|floatformat:2 }}
+                {{ currency_symbol }}{{ forecast.projected_balance|floatformat:2|intcomma }}
             </strong>
         </div>
     </div>
 </div>
 
-<!-- Member breakdown + chart -->
+{% if next_meeting %}
+<div class="alert alert-info d-flex align-items-center justify-content-between">
+    <div>
+        <i class="bi bi-calendar-event"></i>
+        Next meeting <strong>{{ next_meeting.title }}</strong> on
+        <strong>{{ next_meeting.meeting_date|date:"l, M d" }}</strong>
+        ({{ next_meeting.meeting_date|timeuntil }} from now).
+    </div>
+    <a href="{% url 'meeting_detail' next_meeting.pk %}" class="btn btn-sm btn-outline-primary">Open</a>
+</div>
+{% endif %}
+
+<!-- Member breakdown with contribution share -->
+<div class="card p-4 mb-4">
+    <h5 class="mb-3"><i class="bi bi-people"></i> By Member</h5>
+    <div class="table-responsive">
+        <table class="table mb-0">
+            <thead>
+                <tr>
+                    <th>Member</th>
+                    <th class="text-end">Income <small class="text-muted fw-normal">(share)</small></th>
+                    <th class="text-end">Expense <small class="text-muted fw-normal">(share)</small></th>
+                    <th class="text-end">Net</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in members_data %}
+                <tr>
+                    <td><i class="bi bi-person-circle"></i> {{ m.user.username }}</td>
+                    <td class="text-end text-success">
+                        {{ currency_symbol }}{{ m.income|floatformat:2|intcomma }}
+                        <small class="text-muted d-block">{{ m.income_share_pct }}% of total</small>
+                    </td>
+                    <td class="text-end text-danger">
+                        {{ currency_symbol }}{{ m.expense|floatformat:2|intcomma }}
+                        <small class="text-muted d-block">{{ m.expense_share_pct }}% of total</small>
+                    </td>
+                    <td class="text-end fw-bold {% if m.net < 0 %}text-danger{% endif %}">{{ currency_symbol }}{{ m.net|floatformat:2|intcomma }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Spending trends + active goals -->
 <div class="row g-3 mb-4">
-    <div class="col-lg-6">
-        <div class="card p-4">
-            <h5 class="mb-3"><i class="bi bi-people"></i> By Member</h5>
-            <div class="table-responsive">
-                <table class="table mb-0">
-                    <thead>
-                        <tr>
-                            <th>Member</th>
-                            <th class="text-end">Income</th>
-                            <th class="text-end">Expense</th>
-                            <th class="text-end">Net</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for m in members_data %}
-                        <tr>
-                            <td><i class="bi bi-person-circle"></i> {{ m.user.username }}</td>
-                            <td class="text-end text-success">{{ currency_symbol }}{{ m.income|floatformat:2 }}</td>
-                            <td class="text-end text-danger">{{ currency_symbol }}{{ m.expense|floatformat:2 }}</td>
-                            <td class="text-end fw-bold {% if m.net < 0 %}text-danger{% endif %}">{{ currency_symbol }}{{ m.net|floatformat:2 }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+    <div class="col-lg-7">
+        <div class="card p-4 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="mb-0"><i class="bi bi-bar-chart-line text-primary"></i> Last 6 Months</h5>
+                <small class="text-muted">Income vs expense</small>
             </div>
+            <canvas id="trendChart" height="110"></canvas>
         </div>
     </div>
-    <div class="col-lg-6">
-        <div class="card p-4">
-            <h5 class="mb-3"><i class="bi bi-pie-chart"></i> Spending by Category</h5>
-            {% if category_breakdown %}
-                <canvas id="categoryChart" height="220"></canvas>
-            {% else %}
-                <p class="text-muted text-center my-4">No expenses yet this month.</p>
-            {% endif %}
+    <div class="col-lg-5">
+        <div class="card p-4 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="mb-0"><i class="bi bi-piggy-bank text-success"></i> Savings Goals</h5>
+                <a href="{% url 'goal_list' %}" class="small">All</a>
+            </div>
+            <div class="scroll-list" style="max-height: 300px;">
+            {% for g in active_goals %}
+            <div class="mb-3">
+                <div class="d-flex justify-content-between mb-1">
+                    <span>
+                        <i class="bi {{ g.icon }}" style="color: {{ g.color }}"></i>
+                        <a href="{% url 'goal_detail' g.pk %}" class="text-decoration-none">{{ g.name }}</a>
+                    </span>
+                    <small>{{ currency_symbol }}{{ g.current_amount|floatformat:0|intcomma }} / {{ currency_symbol }}{{ g.target_amount|floatformat:0|intcomma }}</small>
+                </div>
+                <div class="progress">
+                    <div class="progress-bar" style="width: {{ g.progress_percent }}%; background-color: {{ g.color }}"></div>
+                </div>
+                {% if g.target_date %}
+                    {% if g.on_track is True %}
+                        <small class="text-success"><i class="bi bi-check-circle"></i> On track for {{ g.target_date|date:"M Y" }}</small>
+                    {% elif g.on_track is False %}
+                        <small class="text-warning"><i class="bi bi-exclamation-triangle"></i> Need {{ currency_symbol }}{{ g.monthly_needed|floatformat:0|intcomma }}/mo to hit target</small>
+                    {% else %}
+                        <small class="text-muted">Target {{ g.target_date|date:"M Y" }}</small>
+                    {% endif %}
+                {% endif %}
+            </div>
+            {% empty %}
+            <p class="text-muted small mb-0">No active goals. <a href="{% url 'goal_create' %}">Add one</a>.</p>
+            {% endfor %}
+            </div>
         </div>
     </div>
 </div>
@@ -165,7 +218,7 @@
             <div class="mb-3">
                 <div class="d-flex justify-content-between mb-1">
                     <span><span class="badge" style="background-color: {{ bp.category.color }}">&nbsp;</span> {{ bp.category.name }}</span>
-                    <small>{{ currency_symbol }}{{ bp.spent|floatformat:0 }} / {{ currency_symbol }}{{ bp.limit|floatformat:0 }}</small>
+                    <small>{{ currency_symbol }}{{ bp.spent|floatformat:0|intcomma }} / {{ currency_symbol }}{{ bp.limit|floatformat:0|intcomma }}</small>
                 </div>
                 <div class="progress">
                     <div class="progress-bar {% if bp.over %}bg-danger{% elif bp.pct > 75 %}bg-warning{% else %}bg-success{% endif %}"
@@ -198,7 +251,7 @@
                     </div>
                 </div>
                 <span class="fw-bold {% if r.transaction_type == 'income' %}text-success{% else %}text-danger{% endif %}">
-                    {{ currency_symbol }}{{ r.amount|floatformat:0 }}
+                    {{ currency_symbol }}{{ r.amount|floatformat:0|intcomma }}
                 </span>
             </div>
             {% empty %}
@@ -224,7 +277,7 @@
                     </div>
                 </div>
                 <span class="{% if t.transaction_type == 'income' %}text-success{% else %}text-danger{% endif %} fw-bold small">
-                    {% if t.transaction_type == 'income' %}+{% else %}-{% endif %}{{ currency_symbol }}{{ t.amount|floatformat:2 }}
+                    {% if t.transaction_type == 'income' %}+{% else %}-{% endif %}{{ currency_symbol }}{{ t.amount|floatformat:2|intcomma }}
                 </span>
             </div>
             {% empty %}
@@ -238,24 +291,32 @@
 {% endblock %}
 
 {% block extra_js %}
-{% if category_breakdown %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
-    const ctx = document.getElementById('categoryChart');
-    new Chart(ctx, {
-        type: 'doughnut',
+    new Chart(document.getElementById('trendChart'), {
+        type: 'bar',
         data: {
-            labels: [{% for c in category_breakdown %}'{{ c.category__name|escapejs }}'{% if not forloop.last %},{% endif %}{% endfor %}],
-            datasets: [{
-                data: [{% for c in category_breakdown %}{{ c.total }}{% if not forloop.last %},{% endif %}{% endfor %}],
-                backgroundColor: [{% for c in category_breakdown %}'{{ c.category__color }}'{% if not forloop.last %},{% endif %}{% endfor %}],
-            }]
+            labels: [{% for m in trend_months %}'{{ m.label|escapejs }}'{% if not forloop.last %},{% endif %}{% endfor %}],
+            datasets: [
+                {
+                    label: 'Income',
+                    data: [{% for m in trend_months %}{{ m.income }}{% if not forloop.last %},{% endif %}{% endfor %}],
+                    backgroundColor: 'rgba(25, 135, 84, 0.7)',
+                    borderRadius: 6,
+                },
+                {
+                    label: 'Expense',
+                    data: [{% for m in trend_months %}{{ m.expense }}{% if not forloop.last %},{% endif %}{% endfor %}],
+                    backgroundColor: 'rgba(220, 53, 69, 0.7)',
+                    borderRadius: 6,
+                }
+            ]
         },
         options: {
             responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { position: 'bottom' } }
+            plugins: { legend: { position: 'bottom' } },
+            scales: { y: { beginAtZero: true } }
         }
     });
 </script>
-{% endif %}
 {% endblock %}

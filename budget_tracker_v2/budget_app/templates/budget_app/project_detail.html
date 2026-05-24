@@ -1,0 +1,88 @@
+{% extends 'budget_app/base.html' %}
+{% load humanize %}
+{% block title %}{{ project.name }}{% endblock %}
+{% block content %}
+
+<nav class="mb-3 small">
+    <a href="{% url 'project_list' %}" class="text-decoration-none"><i class="bi bi-chevron-left"></i> All projects</a>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-2">
+    <div>
+        <h2 class="mb-1"><i class="bi {{ project.icon }}" style="color: {{ project.color }}"></i> {{ project.name }}</h2>
+        <div class="text-muted">
+            {% if project.status == 'active' %}<span class="badge bg-success">Active</span>
+            {% elif project.status == 'planning' %}<span class="badge bg-info">Planning</span>
+            {% elif project.status == 'completed' %}<span class="badge bg-secondary">Completed</span>
+            {% else %}<span class="badge bg-dark">Cancelled</span>{% endif %}
+            {% if project.start_date %} &middot; {{ project.start_date|date:"M d, Y" }}
+                {% if project.end_date %} &ndash; {{ project.end_date|date:"M d, Y" }}{% endif %}
+            {% endif %}
+        </div>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{% url 'project_edit' project.pk %}" class="btn btn-outline-secondary"><i class="bi bi-pencil"></i> Edit</a>
+        <a href="{% url 'project_delete' project.pk %}" class="btn btn-outline-danger"><i class="bi bi-trash"></i></a>
+    </div>
+</div>
+
+{% if project.description %}<p class="text-muted mb-4">{{ project.description|linebreaksbr }}</p>{% endif %}
+
+<div class="row g-3 mb-4">
+    <div class="col-md-3 col-6">
+        <div class="card stat-card p-3"><small class="text-muted">Budget</small>
+            <div class="stat-value">{{ project.currency.symbol|default:currency_symbol }}{{ project.budget|floatformat:2|intcomma }}</div>
+        </div>
+    </div>
+    <div class="col-md-3 col-6">
+        <div class="card stat-card p-3"><small class="text-muted">Spent</small>
+            <div class="stat-value text-danger">{{ project.currency.symbol|default:currency_symbol }}{{ project.spent|floatformat:2|intcomma }}</div>
+        </div>
+    </div>
+    <div class="col-md-3 col-6">
+        <div class="card stat-card p-3"><small class="text-muted">Income recorded</small>
+            <div class="stat-value text-success">{{ project.currency.symbol|default:currency_symbol }}{{ project.income_received|floatformat:2|intcomma }}</div>
+        </div>
+    </div>
+    <div class="col-md-3 col-6">
+        <div class="card stat-card p-3"><small class="text-muted">Used</small>
+            <div class="stat-value {% if project.is_over_budget %}text-danger{% endif %}">{{ project.progress_percent }}%</div>
+            <div class="progress mt-1">
+                <div class="progress-bar {% if project.is_over_budget %}bg-danger{% endif %}"
+                     style="width: {{ project.progress_percent }}%; background-color: {{ project.color }}"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card p-4">
+    <h5 class="mb-3"><i class="bi bi-list-ul"></i> Tagged Transactions</h5>
+    <div class="table-responsive scroll-table" style="max-height: 540px;">
+        <table class="table table-hover mb-0">
+            <thead><tr><th>Date</th><th>Type</th><th>Category</th><th>Payee / Description</th><th class="text-end">Amount</th></tr></thead>
+            <tbody>
+                {% for t in transactions %}
+                <tr>
+                    <td><small>{{ t.date|date:"M d, Y" }}</small></td>
+                    <td>
+                        {% if t.transaction_type == 'income' %}<span class="badge badge-income">Income</span>
+                        {% else %}<span class="badge badge-expense">Expense</span>{% endif %}
+                    </td>
+                    <td>{% if t.category %}<small>{{ t.category.name }}</small>{% else %}<small class="text-muted">—</small>{% endif %}</td>
+                    <td>
+                        {% if t.payee %}<strong>{{ t.payee }}</strong><br>{% endif %}
+                        <small>{{ t.description|default:"" }}</small>
+                    </td>
+                    <td class="text-end fw-bold {% if t.transaction_type == 'income' %}text-success{% else %}text-danger{% endif %}">
+                        {% if t.transaction_type == 'income' %}+{% else %}-{% endif %}{{ t.currency.symbol|default:currency_symbol }}{{ t.amount|floatformat:2|intcomma }}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="5" class="text-center text-muted py-4">No transactions tagged to this project yet. Tag one from the transaction form.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% endblock %}

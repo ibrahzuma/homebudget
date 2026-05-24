@@ -1,0 +1,75 @@
+{% extends 'budget_app/base.html' %}
+{% load humanize %}
+{% block title %}Debts &amp; Payments{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <div>
+        <h2 class="mb-0"><i class="bi bi-cash-coin text-danger"></i> Debts &amp; Payments</h2>
+        <small class="text-muted">Loans, mortgages, credit cards, and other obligations &mdash; track payments and remaining balance.</small>
+    </div>
+    <a href="{% url 'liability_create' %}" class="btn btn-danger"><i class="bi bi-plus-lg"></i> Add Debt</a>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-6">
+        <div class="card stat-card p-3">
+            <small class="text-muted">Total outstanding</small>
+            <div class="stat-value text-danger">{{ currency_symbol }}{{ total_balance|floatformat:2|intcomma }}</div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card stat-card p-3">
+            <small class="text-muted">Total paid so far</small>
+            <div class="stat-value text-success">{{ currency_symbol }}{{ total_paid|floatformat:2|intcomma }}</div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="table-responsive scroll-table">
+        <table class="table table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Debt</th>
+                    <th>Type</th>
+                    <th>Lender</th>
+                    <th class="text-end">Outstanding</th>
+                    <th class="text-end">Paid</th>
+                    <th style="min-width:160px;">Progress</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr>
+                    <td>
+                        <a href="{% url 'debt_detail' row.liability.pk %}" class="text-decoration-none">
+                            <strong>{{ row.liability.name }}</strong>
+                        </a>
+                        {% if row.liability.due_date %}<br><small class="text-muted">Due {{ row.liability.due_date|date:"M d, Y" }}</small>{% endif %}
+                    </td>
+                    <td><span class="badge bg-secondary">{{ row.liability.get_liability_type_display }}</span></td>
+                    <td><small>{{ row.liability.lender|default:"&mdash;" }}</small></td>
+                    <td class="text-end fw-bold text-danger">{{ row.liability.currency.symbol|default:currency_symbol }}{{ row.liability.balance|floatformat:2|intcomma }}</td>
+                    <td class="text-end text-success">{{ row.liability.currency.symbol|default:currency_symbol }}{{ row.paid|floatformat:2|intcomma }}<br><small class="text-muted">{{ row.payments_count }} payment{{ row.payments_count|pluralize }}</small></td>
+                    <td>
+                        <div class="progress">
+                            <div class="progress-bar bg-success" style="width: {{ row.pct }}%"></div>
+                        </div>
+                        <small class="text-muted">{{ row.pct }}% paid</small>
+                    </td>
+                    <td class="text-end">
+                        <a href="{% url 'payment_create' row.liability.pk %}" class="btn btn-sm btn-outline-success" title="Record payment"><i class="bi bi-cash"></i></a>
+                        <a href="{% url 'debt_detail' row.liability.pk %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-eye"></i></a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="7" class="text-center text-muted py-4">No debts recorded.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,35 @@
+{% extends 'budget_app/base.html' %}
+{% load humanize %}
+{% block title %}Record Payment{% endblock %}
+{% block content %}
+
+<nav class="mb-3 small">
+    <a href="{% url 'debt_detail' liability.pk %}" class="text-decoration-none"><i class="bi bi-chevron-left"></i> {{ liability.name }}</a>
+</nav>
+
+<div class="row justify-content-center">
+    <div class="col-lg-7">
+        <div class="card p-4">
+            <h3 class="mb-1"><i class="bi bi-cash text-success"></i> Record Payment</h3>
+            <p class="text-muted">Toward <strong>{{ liability.name }}</strong>. Current outstanding: <strong>{{ liability.currency.symbol|default:currency_symbol }}{{ liability.balance|floatformat:2|intcomma }}</strong></p>
+
+            <form method="post" novalidate>
+                {% csrf_token %}
+                {% for field in form %}
+                <div class="mb-3">
+                    <label class="form-label">{{ field.label }}</label>
+                    {{ field }}
+                    {% if field.help_text %}<small class="text-muted d-block">{{ field.help_text|safe }}</small>{% endif %}
+                    {% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
+                </div>
+                {% endfor %}
+                <div class="d-flex justify-content-between align-items-center">
+                    <a href="{% url 'debt_detail' liability.pk %}" class="text-muted">Cancel</a>
+                    <button type="submit" class="btn btn-success"><i class="bi bi-check-lg"></i> Record Payment</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

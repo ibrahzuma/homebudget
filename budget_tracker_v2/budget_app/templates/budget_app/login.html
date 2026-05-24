@@ -1,29 +1,336 @@
-{% extends 'budget_app/base.html' %}
-{% block title %}Login{% endblock %}
-{% block content %}
-<div class="row justify-content-center mt-5">
-    <div class="col-md-5 col-lg-4">
-        <div class="card p-4 mt-4">
-            <h3 class="text-center mb-4"><i class="bi bi-piggy-bank-fill text-primary"></i> Welcome Back</h3>
-            <form method="post">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login &middot; Home Budget Tracker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        :root {
+            --brand-1: #1e293b;
+            --brand-2: #3b82f6;
+            --brand-3: #0ea5e9;
+        }
+        html, body { height: 100%; }
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f7fb;
+            color: #0f172a;
+        }
+        .auth-wrap {
+            min-height: 100vh;
+            display: grid;
+            grid-template-columns: 1.05fr 1fr;
+        }
+
+        /* Branded panel */
+        .auth-brand {
+            position: relative;
+            color: white;
+            padding: 3rem 3.5rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            background:
+                radial-gradient(1200px 600px at -10% -20%, rgba(56,189,248,0.35), transparent 60%),
+                radial-gradient(900px 500px at 110% 110%, rgba(168,85,247,0.25), transparent 60%),
+                linear-gradient(135deg, var(--brand-1) 0%, #0b1220 100%);
+            overflow: hidden;
+        }
+        .auth-brand::after {
+            content: '';
+            position: absolute; inset: 0;
+            background-image:
+                radial-gradient(rgba(255,255,255,0.06) 1px, transparent 1px);
+            background-size: 28px 28px;
+            opacity: 0.6;
+            pointer-events: none;
+        }
+        .auth-brand > * { position: relative; z-index: 1; }
+
+        .brand-logo {
+            font-size: 1.15rem;
+            font-weight: 600;
+            display: flex; align-items: center; gap: 0.6rem;
+        }
+        .brand-logo .logo-mark {
+            width: 38px; height: 38px;
+            border-radius: 10px;
+            background: linear-gradient(135deg, var(--brand-2), var(--brand-3));
+            display: grid; place-items: center;
+            box-shadow: 0 8px 20px -8px rgba(59,130,246,0.6);
+        }
+        .brand-logo .logo-mark i { font-size: 1.2rem; }
+
+        .hero h1 {
+            font-size: 2.4rem;
+            font-weight: 700;
+            line-height: 1.1;
+            margin-bottom: 1rem;
+        }
+        .hero p {
+            font-size: 1.05rem;
+            color: rgba(255,255,255,0.7);
+            max-width: 28rem;
+            line-height: 1.6;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem 1.5rem;
+            margin-top: 2.5rem;
+            max-width: 32rem;
+        }
+        .feature {
+            display: flex; align-items: flex-start; gap: 0.75rem;
+            color: rgba(255,255,255,0.85);
+        }
+        .feature-ico {
+            flex: 0 0 36px; height: 36px;
+            border-radius: 9px;
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.1);
+            display: grid; place-items: center;
+            color: #93c5fd;
+            font-size: 1rem;
+        }
+        .feature strong { display: block; font-size: 0.92rem; color: white; margin-bottom: 0.1rem; }
+        .feature span { font-size: 0.82rem; color: rgba(255,255,255,0.6); line-height: 1.4; }
+
+        .brand-foot {
+            font-size: 0.8rem;
+            color: rgba(255,255,255,0.5);
+        }
+
+        /* Form panel */
+        .auth-form {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+        .auth-card {
+            width: 100%;
+            max-width: 420px;
+        }
+        .auth-card h2 {
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin-bottom: 0.4rem;
+        }
+        .auth-card .subtitle {
+            color: #64748b;
+            margin-bottom: 2rem;
+        }
+        .auth-card label {
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: #334155;
+            margin-bottom: 0.4rem;
+        }
+        .auth-card .form-control {
+            padding: 0.75rem 0.95rem;
+            border-radius: 10px;
+            border: 1px solid #e2e8f0;
+            font-size: 0.95rem;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        .auth-card .form-control:focus {
+            border-color: var(--brand-2);
+            box-shadow: 0 0 0 4px rgba(59,130,246,0.12);
+        }
+        .auth-card .input-icon {
+            position: relative;
+        }
+        .auth-card .input-icon i {
+            position: absolute;
+            left: 0.85rem; top: 50%;
+            transform: translateY(-50%);
+            color: #94a3b8;
+            font-size: 1rem;
+            pointer-events: none;
+        }
+        .auth-card .input-icon .form-control { padding-left: 2.4rem; }
+        .auth-card .password-toggle {
+            position: absolute;
+            right: 0.75rem; top: 50%;
+            transform: translateY(-50%);
+            background: transparent;
+            border: 0;
+            color: #94a3b8;
+            cursor: pointer;
+            padding: 0.25rem;
+        }
+        .auth-card .password-toggle:hover { color: #475569; }
+
+        .auth-card .submit-btn {
+            width: 100%;
+            padding: 0.8rem 1rem;
+            border-radius: 10px;
+            background: linear-gradient(135deg, var(--brand-2), var(--brand-3));
+            color: white;
+            border: 0;
+            font-weight: 600;
+            font-size: 0.95rem;
+            box-shadow: 0 8px 20px -10px rgba(59,130,246,0.6);
+            transition: transform 0.05s, box-shadow 0.15s;
+        }
+        .auth-card .submit-btn:hover {
+            box-shadow: 0 12px 28px -10px rgba(59,130,246,0.7);
+        }
+        .auth-card .submit-btn:active { transform: translateY(1px); }
+
+        .auth-card .alert-error {
+            background: #fef2f2;
+            color: #b91c1c;
+            border: 1px solid #fecaca;
+            border-radius: 10px;
+            padding: 0.7rem 0.9rem;
+            font-size: 0.88rem;
+            margin-bottom: 1.25rem;
+            display: flex; align-items: center; gap: 0.5rem;
+        }
+
+        .auth-card .form-row {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 1.25rem;
+            font-size: 0.85rem;
+        }
+        .auth-card .form-check-input:checked {
+            background-color: var(--brand-2);
+            border-color: var(--brand-2);
+        }
+
+        .auth-card .signup-link {
+            text-align: center;
+            margin-top: 1.5rem;
+            color: #64748b;
+            font-size: 0.9rem;
+        }
+        .auth-card .signup-link a {
+            color: var(--brand-2);
+            font-weight: 600;
+            text-decoration: none;
+        }
+        .auth-card .signup-link a:hover { text-decoration: underline; }
+
+        /* Responsive */
+        @media (max-width: 900px) {
+            .auth-wrap { grid-template-columns: 1fr; }
+            .auth-brand { padding: 2rem 1.5rem; min-height: auto; }
+            .hero h1 { font-size: 1.8rem; }
+            .feature-grid { display: none; }
+            .brand-foot { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="auth-wrap">
+    <!-- Left: branded panel -->
+    <aside class="auth-brand">
+        <div class="brand-logo">
+            <span class="logo-mark"><i class="bi bi-piggy-bank-fill"></i></span>
+            <span>Home Budget</span>
+        </div>
+
+        <div class="hero">
+            <h1>Manage your household finances, together.</h1>
+            <p>Track income and expenses across two members, set monthly budgets, and forecast where your money is headed — all in one place.</p>
+
+            <div class="feature-grid">
+                <div class="feature">
+                    <div class="feature-ico"><i class="bi bi-people"></i></div>
+                    <div>
+                        <strong>Two-person household</strong>
+                        <span>Combined and per-member totals</span>
+                    </div>
+                </div>
+                <div class="feature">
+                    <div class="feature-ico"><i class="bi bi-graph-up-arrow"></i></div>
+                    <div>
+                        <strong>Forecasting</strong>
+                        <span>End-of-month projections</span>
+                    </div>
+                </div>
+                <div class="feature">
+                    <div class="feature-ico"><i class="bi bi-arrow-repeat"></i></div>
+                    <div>
+                        <strong>Recurring bills</strong>
+                        <span>Auto-applied on schedule</span>
+                    </div>
+                </div>
+                <div class="feature">
+                    <div class="feature-ico"><i class="bi bi-bank"></i></div>
+                    <div>
+                        <strong>Net worth</strong>
+                        <span>Assets minus liabilities</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="brand-foot">&copy; Home Budget &middot; A private space for shared finances</div>
+    </aside>
+
+    <!-- Right: login form -->
+    <main class="auth-form">
+        <div class="auth-card">
+            <h2>Welcome back</h2>
+            <p class="subtitle">Sign in to continue to your household.</p>
+
+            <form method="post" novalidate>
                 {% csrf_token %}
                 {% if form.errors %}
-                    <div class="alert alert-danger">Invalid username or password.</div>
+                    <div class="alert-error">
+                        <i class="bi bi-exclamation-circle-fill"></i>
+                        <span>The username or password you entered is incorrect.</span>
+                    </div>
                 {% endif %}
+
                 <div class="mb-3">
-                    <label class="form-label">Username</label>
-                    <input type="text" name="username" class="form-control" required autofocus>
+                    <label for="id_username">Username</label>
+                    <div class="input-icon">
+                        <i class="bi bi-person"></i>
+                        <input id="id_username" type="text" name="username" class="form-control"
+                               placeholder="e.g. alice" required autofocus autocomplete="username">
+                    </div>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label">Password</label>
-                    <input type="password" name="password" class="form-control" required>
+
+                <div class="mb-2">
+                    <label for="id_password">Password</label>
+                    <div class="input-icon">
+                        <i class="bi bi-lock"></i>
+                        <input id="id_password" type="password" name="password" class="form-control"
+                               placeholder="Your password" required autocomplete="current-password">
+                        <button type="button" class="password-toggle" aria-label="Show password"
+                                onclick="(function(b){var i=document.getElementById('id_password');var s=i.type==='password';i.type=s?'text':'password';b.firstElementChild.className=s?'bi bi-eye-slash':'bi bi-eye';})(this)">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                    </div>
                 </div>
-                <button type="submit" class="btn btn-primary w-100">Login</button>
+
+                <div class="form-row">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="remember">
+                        <label class="form-check-label text-muted" for="remember">Remember me</label>
+                    </div>
+                </div>
+
+                <button type="submit" class="submit-btn">
+                    <i class="bi bi-box-arrow-in-right me-1"></i> Sign in
+                </button>
             </form>
-            <p class="text-center mt-3 mb-0">
-                Don't have an account? <a href="{% url 'signup' %}">Sign up</a>
-            </p>
+
+            <div class="signup-link">
+                New here? <a href="{% url 'signup' %}">Create an account</a>
+            </div>
         </div>
-    </div>
+    </main>
 </div>
-{% endblock %}
+
+</body>
+</html>

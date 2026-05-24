@@ -1,0 +1,97 @@
+{% extends 'budget_app/base.html' %}
+{% load humanize %}
+{% block title %}{{ goal.name }}{% endblock %}
+{% block content %}
+
+<nav class="mb-3 small">
+    <a href="{% url 'goal_list' %}" class="text-decoration-none"><i class="bi bi-chevron-left"></i> All goals</a>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-2">
+    <div>
+        <h2 class="mb-1"><i class="bi {{ goal.icon }}" style="color: {{ goal.color }}"></i> {{ goal.name }}</h2>
+        <div class="text-muted">
+            {% if goal.status == 'achieved' %}<span class="badge bg-success">Achieved</span>
+            {% elif goal.status == 'paused' %}<span class="badge bg-secondary">Paused</span>
+            {% else %}<span class="badge bg-primary">Active</span>{% endif %}
+            {% if goal.target_date %} &middot; target {{ goal.target_date|date:"M d, Y" }}{% endif %}
+        </div>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{% url 'goal_contribute' goal.pk %}" class="btn btn-success"><i class="bi bi-plus-lg"></i> Contribute</a>
+        <a href="{% url 'goal_edit' goal.pk %}" class="btn btn-outline-secondary"><i class="bi bi-pencil"></i> Edit</a>
+        <a href="{% url 'goal_delete' goal.pk %}" class="btn btn-outline-danger"><i class="bi bi-trash"></i></a>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-3 col-6">
+        <div class="card stat-card p-3"><small class="text-muted">Saved</small>
+            <div class="stat-value text-success">{{ goal.currency.symbol|default:currency_symbol }}{{ goal.current_amount|floatformat:2|intcomma }}</div>
+        </div>
+    </div>
+    <div class="col-md-3 col-6">
+        <div class="card stat-card p-3"><small class="text-muted">Target</small>
+            <div class="stat-value">{{ goal.currency.symbol|default:currency_symbol }}{{ goal.target_amount|floatformat:2|intcomma }}</div>
+        </div>
+    </div>
+    <div class="col-md-3 col-6">
+        <div class="card stat-card p-3"><small class="text-muted">Remaining</small>
+            <div class="stat-value text-danger">{{ goal.currency.symbol|default:currency_symbol }}{{ goal.amount_remaining|floatformat:2|intcomma }}</div>
+        </div>
+    </div>
+    <div class="col-md-3 col-6">
+        <div class="card stat-card p-3"><small class="text-muted">Progress</small>
+            <div class="stat-value">{{ goal.progress_percent }}%</div>
+            <div class="progress mt-1"><div class="progress-bar" style="width: {{ goal.progress_percent }}%; background-color: {{ goal.color }}"></div></div>
+        </div>
+    </div>
+</div>
+
+{% if goal.target_date and goal.monthly_needed %}
+<div class="alert {% if goal.on_track %}alert-success{% else %}alert-warning{% endif %} d-flex justify-content-between align-items-center">
+    <div>
+        {% if goal.on_track %}
+            <i class="bi bi-check-circle"></i> On track. Planned contribution {{ currency_symbol }}{{ goal.monthly_contribution|floatformat:0|intcomma }}/mo &middot; needed {{ currency_symbol }}{{ goal.monthly_needed|floatformat:0|intcomma }}/mo for {{ goal.months_remaining }} more months.
+        {% elif goal.monthly_contribution %}
+            <i class="bi bi-exclamation-triangle"></i> Behind. Planned {{ currency_symbol }}{{ goal.monthly_contribution|floatformat:0|intcomma }}/mo &middot; need {{ currency_symbol }}{{ goal.monthly_needed|floatformat:0|intcomma }}/mo for {{ goal.months_remaining }} more months.
+        {% else %}
+            <i class="bi bi-info-circle"></i> To hit your target by {{ goal.target_date|date:"M Y" }}, save {{ currency_symbol }}{{ goal.monthly_needed|floatformat:0|intcomma }}/mo for {{ goal.months_remaining }} more months.
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<div class="card p-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="mb-0"><i class="bi bi-receipt"></i> Contributions</h5>
+        <a href="{% url 'goal_contribute' goal.pk %}" class="btn btn-sm btn-success"><i class="bi bi-plus-lg"></i> Add</a>
+    </div>
+    <div class="table-responsive scroll-table" style="max-height: 460px;">
+        <table class="table table-hover mb-0">
+            <thead>
+                <tr><th>Date</th><th>By</th><th class="text-end">Amount</th><th>Notes</th><th></th></tr>
+            </thead>
+            <tbody>
+                {% for c in contributions %}
+                <tr>
+                    <td><small>{{ c.date|date:"M d, Y" }}</small></td>
+                    <td><small>{% if c.user %}{{ c.user.username }}{% else %}—{% endif %}</small></td>
+                    <td class="text-end fw-bold text-success">{{ goal.currency.symbol|default:currency_symbol }}{{ c.amount|floatformat:2|intcomma }}</td>
+                    <td><small>{{ c.notes|default:"—" }}</small></td>
+                    <td class="text-end">
+                        <form method="post" action="{% url 'goal_contribution_delete' goal.pk c.pk %}" class="d-inline" onsubmit="return confirm('Remove this contribution?');">
+                            {% csrf_token %}
+                            <button class="btn btn-sm btn-outline-danger" title="Undo"><i class="bi bi-arrow-counterclockwise"></i></button>
+                        </form>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="5" class="text-center text-muted py-4">No contributions yet. <a href="{% url 'goal_contribute' goal.pk %}">Add the first one</a>.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% endblock %}

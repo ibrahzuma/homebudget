@@ -1,4 +1,5 @@
 {% extends 'budget_app/base.html' %}
+{% load humanize %}
 {% block title %}Money Request{% endblock %}
 {% block content %}
 
@@ -33,7 +34,7 @@
                 </div>
                 <div class="col-sm-6">
                     <small class="text-muted d-block">Amount</small>
-                    <strong class="fs-4">{{ money_request.currency.symbol|default:currency_symbol }}{{ money_request.amount|floatformat:2 }}</strong>
+                    <strong class="fs-4">{{ money_request.currency.symbol|default:currency_symbol }}{{ money_request.amount|floatformat:2|intcomma }}</strong>
                 </div>
                 <div class="col-sm-6">
                     <small class="text-muted d-block">Category</small>
@@ -62,10 +63,10 @@
             <h6 class="mb-3"><i class="bi bi-check-circle text-success"></i> Linked Transactions</h6>
             <ul class="list-unstyled mb-0 small">
                 {% if money_request.income_transaction %}
-                <li class="mb-1"><span class="badge badge-income">Income</span> Recorded for {{ money_request.requester.username }}: +{{ currency_symbol }}{{ money_request.income_transaction.amount|floatformat:2 }}</li>
+                <li class="mb-1"><span class="badge badge-income">Income</span> Recorded for {{ money_request.requester.username }}: +{{ currency_symbol }}{{ money_request.income_transaction.amount|floatformat:2|intcomma }}</li>
                 {% endif %}
                 {% if money_request.expense_transaction %}
-                <li><span class="badge badge-expense">Expense</span> Recorded for {{ money_request.approver.username }}: -{{ currency_symbol }}{{ money_request.expense_transaction.amount|floatformat:2 }}</li>
+                <li><span class="badge badge-expense">Expense</span> Recorded for {{ money_request.approver.username }}: -{{ currency_symbol }}{{ money_request.expense_transaction.amount|floatformat:2|intcomma }}</li>
                 {% endif %}
             </ul>
             {% endif %}

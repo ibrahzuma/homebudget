@@ -1,4 +1,5 @@
 {% extends 'budget_app/base.html' %}
+{% load humanize %}
 {% block title %}Money Requests{% endblock %}
 {% block content %}
 
@@ -47,7 +48,7 @@
                             <td><i class="bi bi-person-circle"></i> {{ r.requester.username }}</td>
                             <td>{{ r.purpose }}</td>
                             <td>{% if r.category %}<span class="badge" style="background-color:{{ r.category.color }}">{{ r.category.name }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
-                            <td class="text-end fw-bold">{{ r.currency.symbol|default:currency_symbol }}{{ r.amount|floatformat:2 }}</td>
+                            <td class="text-end fw-bold">{{ r.currency.symbol|default:currency_symbol }}{{ r.amount|floatformat:2|intcomma }}</td>
                             <td>
                                 {% if r.status == 'pending' %}<span class="badge bg-warning text-dark">Pending</span>
                                 {% elif r.status == 'approved' %}<span class="badge bg-success">Approved</span>
@@ -87,7 +88,7 @@
                             <td><i class="bi bi-person-circle"></i> {{ r.approver.username }}</td>
                             <td>{{ r.purpose }}</td>
                             <td>{% if r.category %}<span class="badge" style="background-color:{{ r.category.color }}">{{ r.category.name }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
-                            <td class="text-end fw-bold">{{ r.currency.symbol|default:currency_symbol }}{{ r.amount|floatformat:2 }}</td>
+                            <td class="text-end fw-bold">{{ r.currency.symbol|default:currency_symbol }}{{ r.amount|floatformat:2|intcomma }}</td>
                             <td>
                                 {% if r.status == 'pending' %}<span class="badge bg-warning text-dark">Pending</span>
                                 {% elif r.status == 'approved' %}<span class="badge bg-success">Approved</span>

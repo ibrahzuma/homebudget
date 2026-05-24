@@ -111,6 +111,9 @@ class Transaction(models.Model):
     payee = models.CharField(max_length=120, blank=True, help_text='Merchant or source, e.g. "TotalEnergies"')
     date = models.DateField(default=timezone.now)
     created_at = models.DateTimeField(auto_now_add=True)
+    # Tag a transaction to a household project (e.g. "Trip to Spain", "Roof repair")
+    project = models.ForeignKey('Project', on_delete=models.SET_NULL, null=True, blank=True,
+                                related_name='transactions')
 
     # Source tracking
     SOURCE_MANUAL = 'manual'
@@ -382,6 +385,9 @@ class Asset(models.Model):
     TYPE_BANK = 'bank'
     TYPE_INVESTMENT = 'investment'
     TYPE_PROPERTY = 'property'
+    TYPE_LAND = 'land'
+    TYPE_HOUSE = 'house'
+    TYPE_BUSINESS = 'business'
     TYPE_VEHICLE = 'vehicle'
     TYPE_OTHER = 'other'
     TYPE_CHOICES = [
@@ -389,9 +395,14 @@ class Asset(models.Model):
         (TYPE_BANK, 'Bank Account'),
         (TYPE_INVESTMENT, 'Investment'),
         (TYPE_PROPERTY, 'Property/Real Estate'),
+        (TYPE_LAND, 'Land'),
+        (TYPE_HOUSE, 'House'),
+        (TYPE_BUSINESS, 'Business'),
         (TYPE_VEHICLE, 'Vehicle'),
         (TYPE_OTHER, 'Other'),
     ]
+    # Asset types that benefit from the extended detail fields below
+    MAJOR_TYPES = {TYPE_PROPERTY, TYPE_LAND, TYPE_HOUSE, TYPE_BUSINESS, TYPE_VEHICLE}
 
     household = models.ForeignKey(Household, on_delete=models.CASCADE, related_name='assets')
     name = models.CharField(max_length=120)
@@ -399,6 +410,15 @@ class Asset(models.Model):
     value = models.DecimalField(max_digits=14, decimal_places=2)
     currency = models.ForeignKey(Currency, on_delete=models.PROTECT, null=True, blank=True)
     notes = models.TextField(blank=True)
+    # Optional descriptive fields used by major assets (land/house/business/vehicle).
+    acquisition_date = models.DateField(null=True, blank=True,
+                                        help_text='When the asset was acquired')
+    location = models.CharField(max_length=200, blank=True,
+                                help_text='Address, plot, or business location')
+    size = models.CharField(max_length=60, blank=True,
+                            help_text='e.g. 120 m², 0.5 acre, 3 bed / 2 bath')
+    registration_number = models.CharField(max_length=100, blank=True,
+                                            help_text='Title deed, plate, or registration #')
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -406,6 +426,10 @@ class Asset(models.Model):
 
     def __str__(self):
         return f"{self.name}: {self.value}"
+
+    @property
+    def is_major(self):
+        return self.asset_type in self.MAJOR_TYPES
 
 
 class Liability(models.Model):
@@ -423,10 +447,18 @@ class Liability(models.Model):
     household = models.ForeignKey(Household, on_delete=models.CASCADE, related_name='liabilities')
     name = models.CharField(max_length=120)
     liability_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=TYPE_LOAN)
-    balance = models.DecimalField(max_digits=14, decimal_places=2)
+    balance = models.DecimalField(max_digits=14, decimal_places=2,
+                                  help_text='Current outstanding balance')
+    original_amount = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True,
+                                          help_text='Original loan / debt amount, if known')
     currency = models.ForeignKey(Currency, on_delete=models.PROTECT, null=True, blank=True)
     interest_rate = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True,
                                          help_text='Annual %')
+    lender = models.CharField(max_length=200, blank=True,
+                              help_text='Bank, person, or institution holding the debt')
+    start_date = models.DateField(null=True, blank=True)
+    due_date = models.DateField(null=True, blank=True,
+                                help_text='Final repayment date')
     notes = models.TextField(blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -436,6 +468,295 @@ class Liability(models.Model):
 
     def __str__(self):
         return f"{self.name}: {self.balance}"
+
+    @property
+    def total_paid(self):
+        from decimal import Decimal as D
+        return self.payments.aggregate(s=models.Sum('amount'))['s'] or D('0')
+
+
+class LiabilityPayment(models.Model):
+    """A payment made against a debt — decrements the liability balance."""
+    liability = models.ForeignKey(Liability, on_delete=models.CASCADE, related_name='payments')
+    date = models.DateField(default=timezone.now)
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    currency = models.ForeignKey(Currency, on_delete=models.PROTECT, null=True, blank=True)
+    notes = models.TextField(blank=True)
+    # When the payment is also recorded as a household expense, link to it so
+    # deleting the payment can clean up the corresponding transaction.
+    transaction = models.ForeignKey(
+        Transaction, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='debt_payment_for'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date', '-created_at']
+
+    def __str__(self):
+        return f"Payment of {self.amount} on {self.date} for {self.liability.name}"
+
+
+# ============================================================
+# SAVINGS GOALS
+# ============================================================
+
+class Goal(models.Model):
+    STATUS_ACTIVE = 'active'
+    STATUS_ACHIEVED = 'achieved'
+    STATUS_PAUSED = 'paused'
+    STATUS_CHOICES = [
+        (STATUS_ACTIVE, 'Active'),
+        (STATUS_ACHIEVED, 'Achieved'),
+        (STATUS_PAUSED, 'Paused'),
+    ]
+
+    household = models.ForeignKey(Household, on_delete=models.CASCADE, related_name='goals')
+    name = models.CharField(max_length=120, help_text='e.g. "Emergency Fund", "Trip to Spain"')
+    target_amount = models.DecimalField(max_digits=14, decimal_places=2)
+    current_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    target_date = models.DateField(null=True, blank=True)
+    monthly_contribution = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        help_text='How much you plan to add each month'
+    )
+    currency = models.ForeignKey(Currency, on_delete=models.PROTECT, null=True, blank=True)
+    icon = models.CharField(max_length=50, default='bi-piggy-bank', help_text='Bootstrap icon class')
+    color = models.CharField(max_length=7, default='#0d6efd')
+    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default=STATUS_ACTIVE)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.name} ({self.current_amount}/{self.target_amount})"
+
+    @property
+    def progress_percent(self):
+        if not self.target_amount:
+            return 0
+        pct = float(self.current_amount) / float(self.target_amount) * 100
+        return min(round(pct, 1), 100)
+
+    @property
+    def amount_remaining(self):
+        from decimal import Decimal as D
+        return max(D('0'), D(self.target_amount) - D(self.current_amount))
+
+    @property
+    def months_remaining(self):
+        if not self.target_date:
+            return None
+        today = timezone.now().date()
+        if self.target_date <= today:
+            return 0
+        delta_days = (self.target_date - today).days
+        return max(1, delta_days // 30)
+
+    @property
+    def monthly_needed(self):
+        """Amount per month to hit target by target_date."""
+        m = self.months_remaining
+        if not m:
+            return None
+        from decimal import Decimal as D
+        return (D(self.amount_remaining) / D(m)).quantize(D('0.01'))
+
+    @property
+    def on_track(self):
+        """True when the planned monthly contribution is enough to hit the target."""
+        if self.monthly_contribution is None or self.monthly_needed is None:
+            return None
+        return self.monthly_contribution >= self.monthly_needed
+
+
+class GoalContribution(models.Model):
+    """A deposit toward a savings goal."""
+    goal = models.ForeignKey(Goal, on_delete=models.CASCADE, related_name='contributions')
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                             related_name='goal_contributions')
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    date = models.DateField(default=timezone.now)
+    notes = models.TextField(blank=True)
+    transaction = models.ForeignKey(
+        Transaction, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='goal_contribution_for'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date', '-created_at']
+
+    def __str__(self):
+        return f"{self.amount} -> {self.goal.name} on {self.date}"
+
+
+# ============================================================
+# PROJECTS (budget envelopes spanning categories)
+# ============================================================
+
+class Project(models.Model):
+    STATUS_PLANNING = 'planning'
+    STATUS_ACTIVE = 'active'
+    STATUS_COMPLETED = 'completed'
+    STATUS_CANCELLED = 'cancelled'
+    STATUS_CHOICES = [
+        (STATUS_PLANNING, 'Planning'),
+        (STATUS_ACTIVE, 'Active'),
+        (STATUS_COMPLETED, 'Completed'),
+        (STATUS_CANCELLED, 'Cancelled'),
+    ]
+
+    household = models.ForeignKey(Household, on_delete=models.CASCADE, related_name='projects')
+    name = models.CharField(max_length=160)
+    description = models.TextField(blank=True)
+    budget = models.DecimalField(max_digits=14, decimal_places=2, default=0,
+                                  help_text='Total envelope; 0 if untracked')
+    currency = models.ForeignKey(Currency, on_delete=models.PROTECT, null=True, blank=True)
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default=STATUS_PLANNING)
+    color = models.CharField(max_length=7, default='#6610f2')
+    icon = models.CharField(max_length=50, default='bi-bookmark-star')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.name
+
+    @property
+    def spent(self):
+        from decimal import Decimal as D
+        return self.transactions.filter(transaction_type=Transaction.EXPENSE).aggregate(
+            s=models.Sum('amount_base')
+        )['s'] or D('0')
+
+    @property
+    def income_received(self):
+        from decimal import Decimal as D
+        return self.transactions.filter(transaction_type=Transaction.INCOME).aggregate(
+            s=models.Sum('amount_base')
+        )['s'] or D('0')
+
+    @property
+    def progress_percent(self):
+        if not self.budget:
+            return 0
+        pct = float(self.spent) / float(self.budget) * 100
+        return min(round(pct, 1), 100)
+
+    @property
+    def is_over_budget(self):
+        return bool(self.budget) and self.spent > self.budget
+
+
+# ============================================================
+# HOUSEHOLD MEETINGS & AGREEMENTS
+# ============================================================
+
+class Meeting(models.Model):
+    """A scheduled or held household meeting (typically quarterly)."""
+    STATUS_PLANNED = 'planned'
+    STATUS_HELD = 'held'
+    STATUS_CANCELLED = 'cancelled'
+    STATUS_CHOICES = [
+        (STATUS_PLANNED, 'Planned'),
+        (STATUS_HELD, 'Held'),
+        (STATUS_CANCELLED, 'Cancelled'),
+    ]
+
+    household = models.ForeignKey(Household, on_delete=models.CASCADE, related_name='meetings')
+    title = models.CharField(max_length=160, help_text='e.g. "Q2 2026 Review"')
+    meeting_date = models.DateField(default=timezone.now)
+    participants = models.ManyToManyField(User, related_name='meetings_attended', blank=True)
+    agenda = models.TextField(blank=True, help_text='What you plan to discuss')
+    minutes = models.TextField(blank=True, help_text='Summary / minutes of the meeting')
+    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default=STATUS_PLANNED)
+    # Optional snapshot of household state at meeting time
+    income_snapshot = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    expense_snapshot = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    net_worth_snapshot = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-meeting_date', '-created_at']
+
+    def __str__(self):
+        return f"{self.title} ({self.meeting_date})"
+
+    @property
+    def progress_percent(self):
+        items = self.agreements.all()
+        if not items:
+            return 0
+        total = sum(i.progress for i in items)
+        return int(total / items.count())
+
+    @property
+    def open_count(self):
+        return self.agreements.exclude(
+            status__in=[AgreementItem.STATUS_DONE, AgreementItem.STATUS_CANCELLED]
+        ).count()
+
+    @property
+    def done_count(self):
+        return self.agreements.filter(status=AgreementItem.STATUS_DONE).count()
+
+
+class AgreementItem(models.Model):
+    """An action item or decision agreed at a household meeting."""
+    STATUS_OPEN = 'open'
+    STATUS_IN_PROGRESS = 'in_progress'
+    STATUS_DONE = 'done'
+    STATUS_CANCELLED = 'cancelled'
+    STATUS_CHOICES = [
+        (STATUS_OPEN, 'Open'),
+        (STATUS_IN_PROGRESS, 'In progress'),
+        (STATUS_DONE, 'Done'),
+        (STATUS_CANCELLED, 'Cancelled'),
+    ]
+
+    PRIORITY_LOW = 'low'
+    PRIORITY_NORMAL = 'normal'
+    PRIORITY_HIGH = 'high'
+    PRIORITY_CHOICES = [
+        (PRIORITY_LOW, 'Low'),
+        (PRIORITY_NORMAL, 'Normal'),
+        (PRIORITY_HIGH, 'High'),
+    ]
+
+    meeting = models.ForeignKey(Meeting, on_delete=models.CASCADE, related_name='agreements')
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    owner = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                              related_name='owned_agreements')
+    target_date = models.DateField(null=True, blank=True, help_text='When this should be done by')
+    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default=STATUS_OPEN)
+    progress = models.IntegerField(default=0, help_text='0 to 100')
+    priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES, default=PRIORITY_NORMAL)
+    completed_date = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['status', '-priority', 'target_date']
+
+    def __str__(self):
+        return f"{self.title} [{self.get_status_display()}]"
+
+    @property
+    def is_overdue(self):
+        if not self.target_date or self.status in (self.STATUS_DONE, self.STATUS_CANCELLED):
+            return False
+        return self.target_date < timezone.now().date()
 
 
 class NetWorthSnapshot(models.Model):

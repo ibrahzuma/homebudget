@@ -1,4 +1,4 @@
-{% load static %}
+{% load static humanize %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -230,6 +230,15 @@
         <a href="{% url 'networth' %}" class="sidebar-link {% if request.resolver_match.url_name == 'networth' %}active{% endif %}">
             <i class="bi bi-bank"></i> Net Worth
         </a>
+        <a href="{% url 'debt_list' %}" class="sidebar-link {% if 'debt' in request.resolver_match.url_name or 'payment' in request.resolver_match.url_name or 'liability' in request.resolver_match.url_name %}active{% endif %}">
+            <i class="bi bi-cash-coin"></i> Debts &amp; Payments
+        </a>
+        <a href="{% url 'goal_list' %}" class="sidebar-link {% if 'goal' in request.resolver_match.url_name %}active{% endif %}">
+            <i class="bi bi-piggy-bank"></i> Savings Goals
+        </a>
+        <a href="{% url 'project_list' %}" class="sidebar-link {% if 'project' in request.resolver_match.url_name %}active{% endif %}">
+            <i class="bi bi-bookmark-star"></i> Projects
+        </a>
 
         <div class="sidebar-section">Money</div>
         <a href="{% url 'transaction_list' %}" class="sidebar-link {% if 'transaction' in request.resolver_match.url_name %}active{% endif %}">
@@ -256,6 +265,9 @@
         <a href="{% url 'request_list' %}" class="sidebar-link {% if 'request' in request.resolver_match.url_name %}active{% endif %}">
             <i class="bi bi-cash-stack"></i> Money Requests
             {% if pending_requests_count %}<span class="badge bg-warning text-dark">{{ pending_requests_count }}</span>{% endif %}
+        </a>
+        <a href="{% url 'meeting_list' %}" class="sidebar-link {% if 'meeting' in request.resolver_match.url_name or 'agreement' in request.resolver_match.url_name %}active{% endif %}">
+            <i class="bi bi-calendar-event"></i> Meetings
         </a>
 
         <div class="sidebar-section">Settings</div>

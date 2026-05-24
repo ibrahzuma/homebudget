@@ -1,4 +1,5 @@
 {% extends 'budget_app/base.html' %}
+{% load humanize %}
 {% block title %}Budgets{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -23,7 +24,7 @@
                 <tr>
                     <td>{{ r.budget.month|date:"F Y" }}</td>
                     <td><span class="badge" style="background-color:{{ r.budget.category.color }}">{{ r.budget.category.name }}</span></td>
-                    <td class="text-end fw-bold">{{ currency_symbol }}{{ r.budget.monthly_limit|floatformat:2 }}</td>
+                    <td class="text-end fw-bold">{{ currency_symbol }}{{ r.budget.monthly_limit|floatformat:2|intcomma }}</td>
                     <td>
                         {% if r.is_current %}
                             <div class="d-flex align-items-center gap-2">
@@ -31,7 +32,7 @@
                                     <div class="progress-bar {% if r.over %}bg-danger{% elif r.pct > 75 %}bg-warning{% else %}bg-success{% endif %}"
                                          style="width: {{ r.pct }}%"></div>
                                 </div>
-                                <small>{{ currency_symbol }}{{ r.spent|floatformat:0 }}</small>
+                                <small>{{ currency_symbol }}{{ r.spent|floatformat:0|intcomma }}</small>
                             </div>
                         {% else %}
                             <small class="text-muted">—</small>

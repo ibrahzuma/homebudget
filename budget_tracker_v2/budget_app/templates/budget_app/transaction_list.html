@@ -1,4 +1,5 @@
 {% extends 'budget_app/base.html' %}
+{% load humanize %}
 {% block title %}Transactions{% endblock %}
 {% block content %}
 
@@ -85,7 +86,7 @@
                     </td>
                     <td><small><i class="bi bi-person-circle"></i> {{ t.user.username }}</small></td>
                     <td class="text-end fw-bold {% if t.transaction_type == 'income' %}text-success{% else %}text-danger{% endif %}">
-                        {% if t.transaction_type == 'income' %}+{% else %}-{% endif %}{{ t.currency.symbol|default:currency_symbol }}{{ t.amount|floatformat:2 }}
+                        {% if t.transaction_type == 'income' %}+{% else %}-{% endif %}{{ t.currency.symbol|default:currency_symbol }}{{ t.amount|floatformat:2|intcomma }}
                     </td>
                     <td class="text-end">
                         <a href="{% url 'transaction_edit' t.pk %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-pencil"></i></a>
