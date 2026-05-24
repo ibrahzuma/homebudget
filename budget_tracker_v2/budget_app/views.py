@@ -235,30 +235,6 @@ def dashboard(request):
             'pct': min(round(pct, 1), 100), 'over': spent > b.monthly_limit,
         })
 
-    # Spending trends: last 6 months income vs expense
-    def add_months_back(d, n):
-        m = d.month - 1 - n
-        year = d.year + (m // 12)
-        return d.replace(year=year, month=(m % 12) + 1, day=1)
-
-    trend_months = []
-    for i in range(5, -1, -1):
-        ms = add_months_back(month_start, i)
-        me_first, me_last = month_range(ms)
-        inc = Transaction.objects.filter(
-            household=household, transaction_type=Transaction.INCOME,
-            date__gte=me_first, date__lte=me_last
-        ).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
-        exp = Transaction.objects.filter(
-            household=household, transaction_type=Transaction.EXPENSE,
-            date__gte=me_first, date__lte=me_last
-        ).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
-        trend_months.append({
-            'label': ms.strftime('%b %y'),
-            'income': float(inc),
-            'expense': float(exp),
-        })
-
     # Active goals (top 4 by progress remaining)
     active_goals = household.goals.filter(status=Goal.STATUS_ACTIVE).order_by('-target_amount')[:4]
 
@@ -289,7 +265,6 @@ def dashboard(request):
         'forecast': forecast,
         'networth': networth,
         'pending_my_approvals': pending_my_approvals,
-        'trend_months': trend_months,
         'active_goals': active_goals,
         'next_meeting': next_meeting,
     }

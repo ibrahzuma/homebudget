@@ -157,51 +157,38 @@
     </div>
 </div>
 
-<!-- Spending trends + active goals -->
-<div class="row g-3 mb-4">
-    <div class="col-lg-7">
-        <div class="card p-4 h-100">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <h5 class="mb-0"><i class="bi bi-bar-chart-line text-primary"></i> Last 6 Months</h5>
-                <small class="text-muted">Income vs expense</small>
-            </div>
-            <canvas id="trendChart" height="110"></canvas>
-        </div>
+<!-- Active goals -->
+<div class="card p-4 mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="mb-0"><i class="bi bi-piggy-bank text-success"></i> Savings Goals</h5>
+        <a href="{% url 'goal_list' %}" class="small">All</a>
     </div>
-    <div class="col-lg-5">
-        <div class="card p-4 h-100">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <h5 class="mb-0"><i class="bi bi-piggy-bank text-success"></i> Savings Goals</h5>
-                <a href="{% url 'goal_list' %}" class="small">All</a>
+    <div class="row g-3">
+        {% for g in active_goals %}
+        <div class="col-md-6">
+            <div class="d-flex justify-content-between mb-1">
+                <span>
+                    <i class="bi {{ g.icon }}" style="color: {{ g.color }}"></i>
+                    <a href="{% url 'goal_detail' g.pk %}" class="text-decoration-none">{{ g.name }}</a>
+                </span>
+                <small>{{ currency_symbol }}{{ g.current_amount|floatformat:0|intcomma }} / {{ currency_symbol }}{{ g.target_amount|floatformat:0|intcomma }}</small>
             </div>
-            <div class="scroll-list" style="max-height: 300px;">
-            {% for g in active_goals %}
-            <div class="mb-3">
-                <div class="d-flex justify-content-between mb-1">
-                    <span>
-                        <i class="bi {{ g.icon }}" style="color: {{ g.color }}"></i>
-                        <a href="{% url 'goal_detail' g.pk %}" class="text-decoration-none">{{ g.name }}</a>
-                    </span>
-                    <small>{{ currency_symbol }}{{ g.current_amount|floatformat:0|intcomma }} / {{ currency_symbol }}{{ g.target_amount|floatformat:0|intcomma }}</small>
-                </div>
-                <div class="progress">
-                    <div class="progress-bar" style="width: {{ g.progress_percent }}%; background-color: {{ g.color }}"></div>
-                </div>
-                {% if g.target_date %}
-                    {% if g.on_track is True %}
-                        <small class="text-success"><i class="bi bi-check-circle"></i> On track for {{ g.target_date|date:"M Y" }}</small>
-                    {% elif g.on_track is False %}
-                        <small class="text-warning"><i class="bi bi-exclamation-triangle"></i> Need {{ currency_symbol }}{{ g.monthly_needed|floatformat:0|intcomma }}/mo to hit target</small>
-                    {% else %}
-                        <small class="text-muted">Target {{ g.target_date|date:"M Y" }}</small>
-                    {% endif %}
+            <div class="progress">
+                <div class="progress-bar" style="width: {{ g.progress_percent }}%; background-color: {{ g.color }}"></div>
+            </div>
+            {% if g.target_date %}
+                {% if g.on_track is True %}
+                    <small class="text-success"><i class="bi bi-check-circle"></i> On track for {{ g.target_date|date:"M Y" }}</small>
+                {% elif g.on_track is False %}
+                    <small class="text-warning"><i class="bi bi-exclamation-triangle"></i> Need {{ currency_symbol }}{{ g.monthly_needed|floatformat:0|intcomma }}/mo to hit target</small>
+                {% else %}
+                    <small class="text-muted">Target {{ g.target_date|date:"M Y" }}</small>
                 {% endif %}
-            </div>
-            {% empty %}
-            <p class="text-muted small mb-0">No active goals. <a href="{% url 'goal_create' %}">Add one</a>.</p>
-            {% endfor %}
-            </div>
+            {% endif %}
         </div>
+        {% empty %}
+        <div class="col-12"><p class="text-muted small mb-0">No active goals. <a href="{% url 'goal_create' %}">Add one</a>.</p></div>
+        {% endfor %}
     </div>
 </div>
 
@@ -288,35 +275,4 @@
     </div>
 </div>
 
-{% endblock %}
-
-{% block extra_js %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script>
-    new Chart(document.getElementById('trendChart'), {
-        type: 'bar',
-        data: {
-            labels: [{% for m in trend_months %}'{{ m.label|escapejs }}'{% if not forloop.last %},{% endif %}{% endfor %}],
-            datasets: [
-                {
-                    label: 'Income',
-                    data: [{% for m in trend_months %}{{ m.income }}{% if not forloop.last %},{% endif %}{% endfor %}],
-                    backgroundColor: 'rgba(25, 135, 84, 0.7)',
-                    borderRadius: 6,
-                },
-                {
-                    label: 'Expense',
-                    data: [{% for m in trend_months %}{{ m.expense }}{% if not forloop.last %},{% endif %}{% endfor %}],
-                    backgroundColor: 'rgba(220, 53, 69, 0.7)',
-                    borderRadius: 6,
-                }
-            ]
-        },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { position: 'bottom' } },
-            scales: { y: { beginAtZero: true } }
-        }
-    });
-</script>
 {% endblock %}
