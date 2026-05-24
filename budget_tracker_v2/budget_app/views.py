@@ -2053,3 +2053,214 @@ def chat_send(request):
     if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
         return JsonResponse({'ok': True, 'id': msg.id})
     return redirect('chat')
+
+
+# ============================================================
+# MONTHLY REPORT
+# ============================================================
+
+def _month_range_of(year, month):
+    first = date(year, month, 1)
+    return month_range(first)
+
+
+def _add_months_back(d, n):
+    m = d.month - 1 - n
+    year = d.year + (m // 12)
+    return d.replace(year=year, month=(m % 12) + 1, day=1)
+
+
+def _pct_change(now_val, prev_val):
+    """Return percentage change (now - prev) / prev * 100, or None if undefined."""
+    if not prev_val:
+        return None
+    return float(((now_val - prev_val) / prev_val) * 100)
+
+
+@login_required
+@ensure_household
+def monthly_report(request):
+    from django.db.models import Count
+    household = get_user_household(request.user)
+    today = timezone.now().date()
+    try:
+        year = int(request.GET.get('year', today.year))
+        month = int(request.GET.get('month', today.month))
+    except (TypeError, ValueError):
+        year, month = today.year, today.month
+    target = date(year, month, 1)
+    month_start, month_end = _month_range_of(year, month)
+
+    # Prev / next month for nav
+    prev_target = (target - timedelta(days=1)).replace(day=1)
+    if month == 12:
+        next_target = date(year + 1, 1, 1)
+    else:
+        next_target = date(year, month + 1, 1)
+
+    # All transactions in the month
+    qs = household.transactions.filter(date__gte=month_start, date__lte=month_end)
+    inc = qs.filter(transaction_type=Transaction.INCOME).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
+    exp = qs.filter(transaction_type=Transaction.EXPENSE).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
+    net = inc - exp
+    savings_rate = float(net / inc * 100) if inc else None
+
+    # Previous month comparison
+    prev_start, prev_end = _month_range_of(prev_target.year, prev_target.month)
+    prev_qs = household.transactions.filter(date__gte=prev_start, date__lte=prev_end)
+    prev_inc = prev_qs.filter(transaction_type=Transaction.INCOME).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
+    prev_exp = prev_qs.filter(transaction_type=Transaction.EXPENSE).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
+    inc_delta = _pct_change(inc, prev_inc)
+    exp_delta = _pct_change(exp, prev_exp)
+
+    # By member
+    members_data = []
+    for member in household.members.all():
+        m_inc = qs.filter(user=member, transaction_type=Transaction.INCOME).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
+        m_exp = qs.filter(user=member, transaction_type=Transaction.EXPENSE).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
+        exp_share = float(m_exp / exp * 100) if exp else 0
+        inc_share = float(m_inc / inc * 100) if inc else 0
+        members_data.append({
+            'user': member, 'income': m_inc, 'expense': m_exp,
+            'net': m_inc - m_exp,
+            'expense_share_pct': round(exp_share, 1),
+            'income_share_pct': round(inc_share, 1),
+        })
+
+    # Spending by category (with %-of-total)
+    by_category_raw = list(
+        qs.filter(transaction_type=Transaction.EXPENSE, category__isnull=False)
+        .values('category__name', 'category__color', 'category__icon')
+        .annotate(total=Sum('amount_base'), n=Count('id'))
+        .order_by('-total')
+    )
+    by_category = []
+    for c in by_category_raw:
+        c['pct'] = float(c['total'] / exp * 100) if exp else 0
+        by_category.append(c)
+
+    # Top payees (expense only)
+    top_payees = list(
+        qs.filter(transaction_type=Transaction.EXPENSE).exclude(payee='')
+        .values('payee')
+        .annotate(total=Sum('amount_base'), n=Count('id'))
+        .order_by('-total')[:10]
+    )
+
+    # Top single transactions (largest by absolute amount_base)
+    top_transactions = list(qs.order_by('-amount_base').select_related('user', 'category')[:10])
+
+    # Budget performance
+    budget_perf = []
+    for b in Budget.objects.filter(household=household, month=month_start).select_related('category'):
+        spent = qs.filter(transaction_type=Transaction.EXPENSE, category=b.category).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
+        pct = float(spent / b.monthly_limit * 100) if b.monthly_limit else 0
+        budget_perf.append({
+            'category': b.category, 'limit': b.monthly_limit, 'spent': spent,
+            'pct': min(round(pct, 1), 999),
+            'over': spent > b.monthly_limit,
+            'remaining': max(Decimal('0'), b.monthly_limit - spent),
+        })
+
+    # Money requests resolved this month
+    resolved_qs = household.money_requests.filter(
+        resolved_at__gte=month_start, resolved_at__lte=month_end + timedelta(days=1)
+    )
+    requests_stats = {
+        'approved': resolved_qs.filter(status=MoneyRequest.STATUS_APPROVED).count(),
+        'rejected': resolved_qs.filter(status=MoneyRequest.STATUS_REJECTED).count(),
+        'cancelled': resolved_qs.filter(status=MoneyRequest.STATUS_CANCELLED).count(),
+    }
+
+    # Goal contributions this month
+    goal_contribs = GoalContribution.objects.filter(
+        goal__household=household, date__gte=month_start, date__lte=month_end,
+    ).select_related('goal', 'user')
+    goal_total = sum((Decimal(c.amount) for c in goal_contribs), Decimal('0'))
+
+    # Project spending this month
+    project_spending = list(
+        Project.objects.filter(household=household).annotate(
+            month_spent=Sum('transactions__amount_base',
+                            filter=Q(transactions__date__gte=month_start)
+                                 & Q(transactions__date__lte=month_end)
+                                 & Q(transactions__transaction_type=Transaction.EXPENSE))
+        ).filter(month_spent__gt=0).order_by('-month_spent')
+    )
+
+    # Meetings held this month
+    meetings = household.meetings.filter(meeting_date__gte=month_start, meeting_date__lte=month_end)
+
+    # Debts: payments made this month
+    from .models import LiabilityPayment, ReceivablePayment
+    debt_paid = LiabilityPayment.objects.filter(
+        liability__household=household,
+        date__gte=month_start, date__lte=month_end
+    ).aggregate(s=Sum('amount'))['s'] or Decimal('0')
+    debt_paid_count = LiabilityPayment.objects.filter(
+        liability__household=household,
+        date__gte=month_start, date__lte=month_end
+    ).count()
+
+    receivable_received = ReceivablePayment.objects.filter(
+        receivable__household=household,
+        date__gte=month_start, date__lte=month_end
+    ).aggregate(s=Sum('amount'))['s'] or Decimal('0')
+
+    return render(request, 'budget_app/monthly_report.html', {
+        'target': target,
+        'month_label': target.strftime('%B %Y'),
+        'prev_target': prev_target,
+        'next_target': next_target,
+        'is_current_month': target.year == today.year and target.month == today.month,
+        'income': inc, 'expense': exp, 'net': net, 'savings_rate': savings_rate,
+        'inc_delta': inc_delta, 'exp_delta': exp_delta,
+        'prev_income': prev_inc, 'prev_expense': prev_exp,
+        'members_data': members_data,
+        'by_category': by_category,
+        'top_payees': top_payees,
+        'top_transactions': top_transactions,
+        'budget_perf': budget_perf,
+        'requests_stats': requests_stats,
+        'goal_contribs': list(goal_contribs)[:10],
+        'goal_total': goal_total,
+        'project_spending': project_spending,
+        'meetings': meetings,
+        'debt_paid': debt_paid,
+        'debt_paid_count': debt_paid_count,
+        'receivable_received': receivable_received,
+        'tx_count': qs.count(),
+    })
+
+
+@login_required
+@ensure_household
+def monthly_report_csv(request, year, month):
+    """CSV export of all transactions in a single month."""
+    household = get_user_household(request.user)
+    try:
+        target = date(year, month, 1)
+    except ValueError:
+        return redirect('monthly_report')
+    month_start, month_end = month_range(target)
+
+    response = HttpResponse(content_type='text/csv')
+    response['Content-Disposition'] = (
+        f'attachment; filename="report_{year}-{month:02d}.csv"'
+    )
+    writer = csv.writer(response)
+    writer.writerow(['date', 'type', 'amount', 'currency', 'amount_base',
+                     'category', 'payee', 'description', 'member', 'source', 'project'])
+    qs = household.transactions.filter(
+        date__gte=month_start, date__lte=month_end
+    ).select_related('user', 'category', 'currency', 'project').order_by('date')
+    for t in qs:
+        writer.writerow([
+            t.date.isoformat(), t.transaction_type, t.amount,
+            t.currency.code if t.currency else '',
+            t.amount_base or '',
+            t.category.name if t.category else '',
+            t.payee, t.description, t.user.username, t.source,
+            t.project.name if t.project else '',
+        ])
+    return response

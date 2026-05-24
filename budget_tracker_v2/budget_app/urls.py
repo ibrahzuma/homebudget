@@ -80,6 +80,10 @@ urlpatterns = [
     # Forecast
     path('forecast/', views.forecast_view, name='forecast'),
 
+    # Monthly report
+    path('reports/', views.monthly_report, name='monthly_report'),
+    path('reports/<int:year>/<int:month>/csv/', views.monthly_report_csv, name='monthly_report_csv'),
+
     # Receivables — people who borrowed from us
     path('lent/', views.receivable_list, name='receivable_list'),
     path('lent/new/', views.receivable_create, name='receivable_create'),

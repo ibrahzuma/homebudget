@@ -1,0 +1,295 @@
+{% extends 'budget_app/base.html' %}
+{% load humanize %}
+{% block title %}Monthly Report &middot; {{ month_label }}{% endblock %}
+{% block content %}
+
+<style>
+    @media print {
+        .sidebar, .topbar, .chat-fab, .chat-panel, .page-loader,
+        .page-loader-logo, .toast-container, .report-actions { display: none !important; }
+        .main-content { margin-left: 0 !important; padding: 0 !important; }
+        .report-section { page-break-inside: avoid; }
+        body { background: white !important; }
+    }
+    .report-section { margin-bottom: 1.5rem; }
+    .report-section h5 { font-size: 1rem; font-weight: 600; margin-bottom: 0.75rem; }
+    .delta { font-size: 0.78rem; font-weight: 600; }
+    .delta.up   { color: #16a34a; }
+    .delta.down { color: #dc2626; }
+    .cat-bar { height: 8px; border-radius: 4px; background: #e2e8f0; overflow: hidden; }
+    .cat-bar > div { height: 100%; }
+</style>
+
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2 report-header">
+    <div>
+        <h2 class="mb-0"><i class="bi bi-file-earmark-text text-primary"></i> Monthly Report</h2>
+        <small class="text-muted">{{ current_household.name }} &middot; {{ month_label }}{% if is_current_month %} <span class="badge bg-info ms-1">Current</span>{% endif %}</small>
+    </div>
+    <div class="d-flex gap-2 report-actions">
+        <a href="?year={{ prev_target.year }}&month={{ prev_target.month }}" class="btn btn-outline-secondary">
+            <i class="bi bi-chevron-left"></i> {{ prev_target|date:"M Y" }}
+        </a>
+        <a href="?year={{ next_target.year }}&month={{ next_target.month }}" class="btn btn-outline-secondary">
+            {{ next_target|date:"M Y" }} <i class="bi bi-chevron-right"></i>
+        </a>
+        <a href="{% url 'monthly_report_csv' target.year target.month %}" class="btn btn-outline-success">
+            <i class="bi bi-file-earmark-spreadsheet"></i> CSV
+        </a>
+        <button class="btn btn-outline-primary" onclick="window.print()">
+            <i class="bi bi-printer"></i> Print
+        </button>
+    </div>
+</div>
+
+<!-- Stat cards -->
+<div class="row g-3 mb-4 report-section">
+    <div class="col-md-3 col-sm-6">
+        <div class="card stat-card p-3">
+            <small class="text-muted">Income</small>
+            <div class="stat-value text-success">{{ currency_symbol }}{{ income|floatformat:2|intcomma }}</div>
+            {% if inc_delta is not None %}
+                <span class="delta {% if inc_delta >= 0 %}up{% else %}down{% endif %}">
+                    {% if inc_delta >= 0 %}+{% endif %}{{ inc_delta|floatformat:1 }}% vs last month
+                </span>
+            {% else %}<small class="text-muted">No prior month data</small>{% endif %}
+        </div>
+    </div>
+    <div class="col-md-3 col-sm-6">
+        <div class="card stat-card p-3">
+            <small class="text-muted">Expenses</small>
+            <div class="stat-value text-danger">{{ currency_symbol }}{{ expense|floatformat:2|intcomma }}</div>
+            {% if exp_delta is not None %}
+                <span class="delta {% if exp_delta > 0 %}down{% else %}up{% endif %}">
+                    {% if exp_delta >= 0 %}+{% endif %}{{ exp_delta|floatformat:1 }}% vs last month
+                </span>
+            {% else %}<small class="text-muted">No prior month data</small>{% endif %}
+        </div>
+    </div>
+    <div class="col-md-3 col-sm-6">
+        <div class="card stat-card p-3">
+            <small class="text-muted">Net</small>
+            <div class="stat-value {% if net < 0 %}text-danger{% else %}text-primary{% endif %}">
+                {{ currency_symbol }}{{ net|floatformat:2|intcomma }}
+            </div>
+            <small class="text-muted">{{ tx_count }} transaction{{ tx_count|pluralize }}</small>
+        </div>
+    </div>
+    <div class="col-md-3 col-sm-6">
+        <div class="card stat-card p-3">
+            <small class="text-muted">Savings rate</small>
+            <div class="stat-value">
+                {% if savings_rate is not None %}{{ savings_rate|floatformat:1 }}%{% else %}&mdash;{% endif %}
+            </div>
+            <small class="text-muted">Net &divide; Income</small>
+        </div>
+    </div>
+</div>
+
+<!-- By Member -->
+<div class="card p-4 mb-4 report-section">
+    <h5 class="mb-3"><i class="bi bi-people"></i> By Member</h5>
+    <div class="table-responsive">
+        <table class="table mb-0">
+            <thead>
+                <tr>
+                    <th>Member</th>
+                    <th class="text-end">Income <small class="text-muted fw-normal">(share)</small></th>
+                    <th class="text-end">Expense <small class="text-muted fw-normal">(share)</small></th>
+                    <th class="text-end">Net</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in members_data %}
+                <tr>
+                    <td><i class="bi bi-person-circle"></i> {{ m.user.username }}</td>
+                    <td class="text-end text-success">{{ currency_symbol }}{{ m.income|floatformat:2|intcomma }}
+                        <small class="text-muted d-block">{{ m.income_share_pct }}% of total</small></td>
+                    <td class="text-end text-danger">{{ currency_symbol }}{{ m.expense|floatformat:2|intcomma }}
+                        <small class="text-muted d-block">{{ m.expense_share_pct }}% of total</small></td>
+                    <td class="text-end fw-bold {% if m.net < 0 %}text-danger{% endif %}">{{ currency_symbol }}{{ m.net|floatformat:2|intcomma }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <!-- Spending by category -->
+    <div class="col-lg-6">
+        <div class="card p-4 h-100 report-section">
+            <h5 class="mb-3"><i class="bi bi-pie-chart"></i> Spending by Category</h5>
+            {% for c in by_category %}
+            <div class="mb-3">
+                <div class="d-flex justify-content-between mb-1 small">
+                    <span><i class="bi {{ c.category__icon }}" style="color:{{ c.category__color }}"></i> {{ c.category__name }}
+                        <span class="text-muted ms-1">({{ c.n }} tx)</span></span>
+                    <span><strong>{{ currency_symbol }}{{ c.total|floatformat:2|intcomma }}</strong>
+                        <span class="text-muted ms-1">{{ c.pct|floatformat:1 }}%</span></span>
+                </div>
+                <div class="cat-bar"><div style="width: {{ c.pct }}%; background-color: {{ c.category__color }}"></div></div>
+            </div>
+            {% empty %}
+            <p class="text-muted small mb-0">No categorised expenses this month.</p>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Top payees -->
+    <div class="col-lg-6">
+        <div class="card p-4 h-100 report-section">
+            <h5 class="mb-3"><i class="bi bi-shop"></i> Top Payees</h5>
+            <div class="table-responsive">
+                <table class="table table-sm mb-0">
+                    <thead>
+                        <tr><th>Payee</th><th class="text-center">Tx</th><th class="text-end">Total</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for p in top_payees %}
+                        <tr>
+                            <td><strong>{{ p.payee }}</strong></td>
+                            <td class="text-center"><small>{{ p.n }}</small></td>
+                            <td class="text-end fw-bold text-danger">{{ currency_symbol }}{{ p.total|floatformat:2|intcomma }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="3" class="text-muted text-center py-3">No payees recorded this month.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Budget performance -->
+{% if budget_perf %}
+<div class="card p-4 mb-4 report-section">
+    <h5 class="mb-3"><i class="bi bi-bullseye"></i> Budget Performance</h5>
+    <div class="row g-3">
+        {% for b in budget_perf %}
+        <div class="col-md-6">
+            <div class="d-flex justify-content-between mb-1">
+                <span><i class="bi {{ b.category.icon }}" style="color:{{ b.category.color }}"></i> {{ b.category.name }}</span>
+                <small>{{ currency_symbol }}{{ b.spent|floatformat:0|intcomma }} / {{ currency_symbol }}{{ b.limit|floatformat:0|intcomma }}</small>
+            </div>
+            <div class="progress" style="height: 10px;">
+                <div class="progress-bar {% if b.over %}bg-danger{% elif b.pct > 80 %}bg-warning{% else %}bg-success{% endif %}"
+                     style="width: {% if b.pct > 100 %}100{% else %}{{ b.pct }}{% endif %}%"></div>
+            </div>
+            <small class="{% if b.over %}text-danger fw-bold{% else %}text-muted{% endif %}">
+                {% if b.over %}Over by {{ currency_symbol }}{{ b.spent|floatformat:0|intcomma }} &middot; {% endif %}
+                {{ b.pct }}% used
+                {% if not b.over %} &middot; {{ currency_symbol }}{{ b.remaining|floatformat:0|intcomma }} left{% endif %}
+            </small>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Activity summary (requests, debts, goals, projects, meetings) -->
+<div class="row g-3 mb-4 report-section">
+    <div class="col-md-3 col-sm-6">
+        <div class="card p-3 h-100">
+            <small class="text-muted">Money Requests Resolved</small>
+            <div class="stat-value">{{ requests_stats.approved|add:requests_stats.rejected|add:requests_stats.cancelled }}</div>
+            <small class="text-muted">
+                <span class="text-success">{{ requests_stats.approved }} approved</span> &middot;
+                <span class="text-danger">{{ requests_stats.rejected }} rejected</span> &middot;
+                {{ requests_stats.cancelled }} cancelled
+            </small>
+        </div>
+    </div>
+    <div class="col-md-3 col-sm-6">
+        <div class="card p-3 h-100">
+            <small class="text-muted">Saved Toward Goals</small>
+            <div class="stat-value text-success">{{ currency_symbol }}{{ goal_total|floatformat:2|intcomma }}</div>
+            <small class="text-muted">{{ goal_contribs|length }} contribution{{ goal_contribs|length|pluralize }}</small>
+        </div>
+    </div>
+    <div class="col-md-3 col-sm-6">
+        <div class="card p-3 h-100">
+            <small class="text-muted">Debt Paid</small>
+            <div class="stat-value text-warning">{{ currency_symbol }}{{ debt_paid|floatformat:2|intcomma }}</div>
+            <small class="text-muted">{{ debt_paid_count }} payment{{ debt_paid_count|pluralize }}</small>
+        </div>
+    </div>
+    <div class="col-md-3 col-sm-6">
+        <div class="card p-3 h-100">
+            <small class="text-muted">Repaid to Us</small>
+            <div class="stat-value text-success">{{ currency_symbol }}{{ receivable_received|floatformat:2|intcomma }}</div>
+            <small class="text-muted">from loans out</small>
+        </div>
+    </div>
+</div>
+
+{% if project_spending or meetings %}
+<div class="row g-3 mb-4">
+    {% if project_spending %}
+    <div class="col-lg-6">
+        <div class="card p-4 h-100 report-section">
+            <h5 class="mb-3"><i class="bi bi-bookmark-star"></i> Project Spending</h5>
+            <ul class="list-unstyled mb-0">
+                {% for p in project_spending %}
+                <li class="d-flex justify-content-between border-bottom py-2">
+                    <span><i class="bi {{ p.icon }}" style="color:{{ p.color }}"></i> <a href="{% url 'project_detail' p.pk %}" class="text-decoration-none">{{ p.name }}</a></span>
+                    <strong class="text-danger">{{ currency_symbol }}{{ p.month_spent|floatformat:2|intcomma }}</strong>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+    {% endif %}
+    {% if meetings %}
+    <div class="col-lg-6">
+        <div class="card p-4 h-100 report-section">
+            <h5 class="mb-3"><i class="bi bi-calendar-event"></i> Meetings Held</h5>
+            <ul class="list-unstyled mb-0">
+                {% for m in meetings %}
+                <li class="d-flex justify-content-between border-bottom py-2">
+                    <span><a href="{% url 'meeting_detail' m.pk %}" class="text-decoration-none">{{ m.title }}</a>
+                        <small class="text-muted d-block">{{ m.meeting_date|date:"M d" }} &middot; {{ m.done_count }}/{{ m.agreements.count }} done</small></span>
+                    <span class="badge bg-{% if m.status == 'held' %}success{% elif m.status == 'cancelled' %}secondary{% else %}info{% endif %}">{{ m.get_status_display }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- Largest transactions -->
+{% if top_transactions %}
+<div class="card p-4 mb-4 report-section">
+    <h5 class="mb-3"><i class="bi bi-bar-chart-line"></i> Largest Transactions</h5>
+    <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+            <thead><tr><th>Date</th><th>Type</th><th>Category</th><th>Payee / Description</th><th>Member</th><th class="text-end">Amount</th></tr></thead>
+            <tbody>
+                {% for t in top_transactions %}
+                <tr>
+                    <td><small>{{ t.date|date:"M d" }}</small></td>
+                    <td>{% if t.transaction_type == 'income' %}<span class="badge badge-income">Income</span>{% else %}<span class="badge badge-expense">Expense</span>{% endif %}</td>
+                    <td>{% if t.category %}<small><i class="bi {{ t.category.icon }}"></i> {{ t.category.name }}</small>{% else %}<small class="text-muted">—</small>{% endif %}</td>
+                    <td>
+                        {% if t.payee %}<strong>{{ t.payee }}</strong>{% endif %}
+                        {% if t.description %}<small class="text-muted d-block">{{ t.description|truncatechars:60 }}</small>{% endif %}
+                    </td>
+                    <td><small>{{ t.user.username }}</small></td>
+                    <td class="text-end fw-bold {% if t.transaction_type == 'income' %}text-success{% else %}text-danger{% endif %}">
+                        {% if t.transaction_type == 'income' %}+{% else %}-{% endif %}{{ currency_symbol }}{{ t.amount|floatformat:2|intcomma }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<p class="text-muted small text-center mb-0">
+    Generated {% now "M d, Y H:i" %} &middot; <a href="{% url 'transaction_list' %}?type=&category=">View all transactions</a>
+</p>
+
+{% endblock %}
