@@ -132,8 +132,9 @@ class Transaction(models.Model):
         return f"{self.get_transaction_type_display()} - {self.amount} ({self.user.username})"
 
     def save(self, *args, **kwargs):
-        # Always compute base amount for aggregation
-        if self.amount_base is None or kwargs.pop('recompute_base', False):
+        # Pop unconditionally so the kwarg never leaks to super().save()
+        recompute = kwargs.pop('recompute_base', False)
+        if self.amount_base is None or recompute:
             self.amount_base = self._compute_amount_base()
         super().save(*args, **kwargs)
 

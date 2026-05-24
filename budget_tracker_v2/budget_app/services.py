@@ -187,12 +187,24 @@ def forecast_end_of_month(household, today=None):
     # Add upcoming recurring transactions for the rest of the month
     upcoming_expense = Decimal('0')
     upcoming_income = Decimal('0')
+    base = household.base_currency
     for r in RecurringTransaction.objects.filter(
         household=household, is_active=True, auto_create=True,
         next_due_date__gt=today, next_due_date__lte=month_end,
     ):
-        # Convert amount to base currency roughly
-        amt = r.amount  # simple: assume base currency unless rate exists
+        amt = Decimal(r.amount)
+        if base and r.currency_id and r.currency_id != base.id:
+            rate = ExchangeRate.objects.filter(
+                from_currency=r.currency, to_currency=base
+            ).first()
+            if rate:
+                amt = amt * rate.rate
+            else:
+                inverse = ExchangeRate.objects.filter(
+                    from_currency=base, to_currency=r.currency
+                ).first()
+                if inverse and inverse.rate:
+                    amt = amt / inverse.rate
         if r.transaction_type == Transaction.EXPENSE:
             upcoming_expense += amt
         else:

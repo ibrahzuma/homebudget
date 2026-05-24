@@ -769,41 +769,26 @@ def request_detail(request, pk):
 
         if action == 'approve' and can_respond:
             with db_transaction.atomic():
-                # Income for requester (deducted from approver in spirit, but the
-                # request "transfers" budgeted money → recorded as income for the
-                # requester and as an expense from the approver).
+                # An approved money request is purely an internal transfer of
+                # household funds — it represents money the household is
+                # actually spending, not income. Record a single expense
+                # attributed to the requester (the spender), in the requested
+                # category, so the household total reflects the outflow once.
                 cur = money_request.currency or household.base_currency
-                # Find or create a simple "Transfer" income category
-                transfer_cat, _ = Category.objects.get_or_create(
-                    household=household, name='Transfer (Approved)',
-                    category_type=Category.INCOME,
-                    defaults={'color': '#0dcaf0', 'icon': 'bi-arrow-left-right'},
-                )
-                income_t = Transaction.objects.create(
-                    household=household, user=money_request.requester,
-                    category=transfer_cat,
-                    transaction_type=Transaction.INCOME,
-                    amount=money_request.amount, currency=cur,
-                    description=f"Approved request: {money_request.purpose}",
-                    payee=money_request.approver.username,
-                    date=timezone.now().date(),
-                    source=Transaction.SOURCE_REQUEST,
-                )
-                expense_cat = money_request.category
                 expense_t = Transaction.objects.create(
-                    household=household, user=money_request.approver,
-                    category=expense_cat,
+                    household=household, user=money_request.requester,
+                    category=money_request.category,
                     transaction_type=Transaction.EXPENSE,
                     amount=money_request.amount, currency=cur,
-                    description=f"Granted to {money_request.requester.username}: {money_request.purpose}",
-                    payee=money_request.requester.username,
+                    description=f"Approved by {money_request.approver.username}: {money_request.purpose}",
+                    payee=money_request.purpose,
                     date=timezone.now().date(),
                     source=Transaction.SOURCE_REQUEST,
                 )
                 money_request.status = MoneyRequest.STATUS_APPROVED
                 money_request.response_note = note
                 money_request.resolved_at = timezone.now()
-                money_request.income_transaction = income_t
+                money_request.income_transaction = None
                 money_request.expense_transaction = expense_t
                 money_request.save()
                 Alert.objects.create(

@@ -1,4 +1,6 @@
 """Make household, currency, and unread alerts available in all templates."""
+from django.db.models import Q
+
 from .models import Alert, MoneyRequest
 
 
@@ -12,7 +14,7 @@ def household_context(request):
     unread_alerts = Alert.objects.filter(
         household=household, is_read=False
     ).filter(
-        # global alerts (user=None) or addressed to this user
+        Q(user__isnull=True) | Q(user=request.user)
     ).count()
 
     pending_requests = MoneyRequest.objects.filter(

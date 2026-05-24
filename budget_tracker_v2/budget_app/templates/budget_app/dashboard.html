@@ -160,6 +160,7 @@
                 <h5 class="mb-0"><i class="bi bi-bullseye"></i> Budget Progress</h5>
                 <a href="{% url 'budget_list' %}" class="small">Manage</a>
             </div>
+            <div class="scroll-list">
             {% for bp in budget_progress %}
             <div class="mb-3">
                 <div class="d-flex justify-content-between mb-1">
@@ -174,6 +175,7 @@
             {% empty %}
             <p class="text-muted small">No budgets. <a href="{% url 'budget_create' %}">Create one</a>.</p>
             {% endfor %}
+            </div>
         </div>
     </div>
 
@@ -183,6 +185,7 @@
                 <h5 class="mb-0"><i class="bi bi-calendar3"></i> Upcoming Bills</h5>
                 <a href="{% url 'bill_calendar' %}" class="small">Calendar</a>
             </div>
+            <div class="scroll-list">
             {% for r in upcoming %}
             <div class="d-flex justify-content-between align-items-center py-2 border-bottom">
                 <div>
@@ -201,6 +204,7 @@
             {% empty %}
             <p class="text-muted small">Nothing due in the next 7 days.</p>
             {% endfor %}
+            </div>
         </div>
     </div>
 
@@ -210,10 +214,11 @@
                 <h5 class="mb-0"><i class="bi bi-clock-history"></i> Recent Activity</h5>
                 <a href="{% url 'transaction_list' %}" class="small">All</a>
             </div>
+            <div class="scroll-list">
             {% for t in recent %}
             <div class="d-flex justify-content-between align-items-center py-2 border-bottom">
                 <div class="text-truncate" style="max-width: 65%;">
-                    <strong class="text-truncate d-block">{{ t.description|default:t.payee|default:t.category.name|default:"—" }}</strong>
+                    <strong class="text-truncate d-block">{% if t.description %}{{ t.description }}{% elif t.payee %}{{ t.payee }}{% elif t.category %}{{ t.category.name }}{% else %}—{% endif %}</strong>
                     <div class="small text-muted">
                         {{ t.user.username }} &middot; {{ t.date|date:"M d" }}
                     </div>
@@ -225,6 +230,7 @@
             {% empty %}
             <p class="text-muted small">No transactions yet.</p>
             {% endfor %}
+            </div>
         </div>
     </div>
 </div>

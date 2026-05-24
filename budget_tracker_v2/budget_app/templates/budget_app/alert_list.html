@@ -14,7 +14,7 @@
 </div>
 
 <div class="card">
-    <ul class="list-group list-group-flush">
+    <ul class="list-group list-group-flush scroll-list" style="max-height: 600px;">
         {% for a in alerts %}
         <li class="list-group-item {% if not a.is_read %}bg-light{% endif %}">
             <div class="d-flex justify-content-between align-items-start gap-3">
