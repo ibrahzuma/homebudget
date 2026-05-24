@@ -265,7 +265,7 @@ def forecast_end_of_month(household, today=None):
 # -------- net worth --------
 
 def compute_net_worth(household):
-    """Sum assets and liabilities (in base currency)."""
+    """Sum assets, receivables (money lent out), and liabilities (in base currency)."""
     base = household.base_currency
 
     def to_base(amount, currency):
@@ -288,6 +288,11 @@ def compute_net_worth(household):
             a.get_asset_type_display(), Decimal('0')
         ) + v
 
+    # Receivables — money others owe us — are an asset on the balance sheet
+    total_receivables = Decimal('0')
+    for r in household.receivables.filter(status='active'):
+        total_receivables += Decimal(to_base(r.balance, r.currency))
+
     total_liab = Decimal('0')
     by_liab_type = {}
     for l in household.liabilities.all():
@@ -299,8 +304,9 @@ def compute_net_worth(household):
 
     return {
         'total_assets': total_assets.quantize(Decimal('0.01')),
+        'total_receivables': total_receivables.quantize(Decimal('0.01')),
         'total_liabilities': total_liab.quantize(Decimal('0.01')),
-        'net_worth': (total_assets - total_liab).quantize(Decimal('0.01')),
+        'net_worth': (total_assets + total_receivables - total_liab).quantize(Decimal('0.01')),
         'assets_by_type': by_asset_type,
         'liabilities_by_type': by_liab_type,
     }

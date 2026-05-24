@@ -1,0 +1,18 @@
+{% extends 'budget_app/base.html' %}
+{% load humanize %}
+{% block title %}Delete Loan{% endblock %}
+{% block content %}
+<div class="row justify-content-center"><div class="col-lg-6"><div class="card p-4">
+    <h4 class="mb-3 text-danger"><i class="bi bi-exclamation-triangle"></i> Delete this loan?</h4>
+    <p>Removes the loan record for <strong>{{ receivable.debtor_name }}</strong>
+        ({{ receivable.currency.symbol|default:currency_symbol }}{{ receivable.balance|floatformat:2|intcomma }} outstanding)
+        and all its repayment history.</p>
+    <p class="text-muted small">Any household income transactions previously created from repayments are left in place.</p>
+    <form method="post">{% csrf_token %}
+        <div class="d-flex justify-content-between">
+            <a href="{% url 'receivable_detail' receivable.pk %}" class="text-muted">Cancel</a>
+            <button class="btn btn-danger"><i class="bi bi-trash"></i> Delete</button>
+        </div>
+    </form>
+</div></div></div>
+{% endblock %}

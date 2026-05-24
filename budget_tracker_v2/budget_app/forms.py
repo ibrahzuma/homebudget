@@ -6,6 +6,7 @@ from .models import (
     Transaction, Category, Budget, Household, RecurringTransaction,
     CategoryRule, Asset, Liability, LiabilityPayment, MoneyRequest, Currency,
     Meeting, AgreementItem, Goal, GoalContribution, Project,
+    Receivable, ReceivablePayment,
 )
 
 
@@ -319,6 +320,57 @@ class GoalContributionForm(BootstrapMixin, forms.ModelForm):
             'date': forms.DateInput(attrs={'type': 'date'}),
             'notes': forms.Textarea(attrs={'rows': 2}),
         }
+
+
+class ReceivableForm(BootstrapMixin, forms.ModelForm):
+    record_as_expense = forms.BooleanField(
+        required=False, initial=False,
+        label='Also record this lending as a household expense',
+        help_text='Check this only when first creating a brand-new loan and you want the cash outflow tracked.'
+    )
+
+    class Meta:
+        model = Receivable
+        fields = ('debtor_name', 'debtor_contact', 'description', 'balance', 'original_amount',
+                  'currency', 'interest_rate', 'lent_date', 'due_date', 'status', 'notes')
+        widgets = {
+            'lent_date': forms.DateInput(attrs={'type': 'date'}),
+            'due_date': forms.DateInput(attrs={'type': 'date'}),
+            'debtor_name': forms.TextInput(attrs={'placeholder': 'Name of the borrower'}),
+            'debtor_contact': forms.TextInput(attrs={'placeholder': 'Phone, email (optional)'}),
+            'description': forms.TextInput(attrs={'placeholder': 'e.g. tuition, emergency fund'}),
+            'notes': forms.Textarea(attrs={'rows': 2}),
+        }
+
+    def __init__(self, *args, household=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if household and household.base_currency and not self.initial.get('currency'):
+            self.fields['currency'].initial = household.base_currency
+        # Don't show record_as_expense on edit — only on create.
+        if self.instance.pk:
+            self.fields.pop('record_as_expense')
+
+
+class ReceivablePaymentForm(BootstrapMixin, forms.ModelForm):
+    record_as_income = forms.BooleanField(
+        required=False, initial=True,
+        label='Also record this repayment as household income',
+    )
+
+    class Meta:
+        model = ReceivablePayment
+        fields = ('date', 'amount', 'currency', 'notes')
+        widgets = {
+            'date': forms.DateInput(attrs={'type': 'date'}),
+            'notes': forms.Textarea(attrs={'rows': 2}),
+        }
+
+    def __init__(self, *args, household=None, receivable=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if household and household.base_currency and not self.initial.get('currency'):
+            self.fields['currency'].initial = household.base_currency
+        if receivable and not self.initial.get('currency'):
+            self.fields['currency'].initial = receivable.currency
 
 
 class ProjectForm(BootstrapMixin, forms.ModelForm):

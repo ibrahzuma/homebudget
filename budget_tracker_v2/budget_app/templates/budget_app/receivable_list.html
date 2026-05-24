@@ -1,0 +1,86 @@
+{% extends 'budget_app/base.html' %}
+{% load humanize %}
+{% block title %}Lent to Others{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <div>
+        <h2 class="mb-0"><i class="bi bi-hand-thumbs-up text-success"></i> Lent to Others</h2>
+        <small class="text-muted">People who borrowed from the household. Outstanding amounts count toward your net worth.</small>
+    </div>
+    <a href="{% url 'receivable_create' %}" class="btn btn-success"><i class="bi bi-plus-lg"></i> Record a Loan</a>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="card stat-card p-3">
+            <small class="text-muted">Total outstanding</small>
+            <div class="stat-value text-success">{{ currency_symbol }}{{ total_outstanding|floatformat:2|intcomma }}</div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card stat-card p-3">
+            <small class="text-muted">Total repaid so far</small>
+            <div class="stat-value">{{ currency_symbol }}{{ total_received|floatformat:2|intcomma }}</div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card stat-card p-3">
+            <small class="text-muted">Overdue</small>
+            <div class="stat-value {% if overdue_count %}text-danger{% endif %}">{{ overdue_count }}</div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="table-responsive scroll-table">
+        <table class="table table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Borrower</th>
+                    <th>Purpose</th>
+                    <th class="text-end">Outstanding</th>
+                    <th class="text-end">Repaid</th>
+                    <th style="min-width:160px;">Progress</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr {% if row.is_overdue %}class="table-warning"{% endif %}>
+                    <td>
+                        <a href="{% url 'receivable_detail' row.receivable.pk %}" class="text-decoration-none">
+                            <strong>{{ row.receivable.debtor_name }}</strong>
+                        </a>
+                        {% if row.receivable.due_date %}<br><small class="text-muted">Due {{ row.receivable.due_date|date:"M d, Y" }}</small>{% endif %}
+                        {% if row.is_overdue %}<span class="badge bg-danger ms-1">Overdue</span>{% endif %}
+                    </td>
+                    <td><small>{{ row.receivable.description|default:"—" }}</small></td>
+                    <td class="text-end fw-bold text-success">{{ row.receivable.currency.symbol|default:currency_symbol }}{{ row.receivable.balance|floatformat:2|intcomma }}</td>
+                    <td class="text-end">{{ row.receivable.currency.symbol|default:currency_symbol }}{{ row.received|floatformat:2|intcomma }}<br><small class="text-muted">{{ row.payments_count }} repayment{{ row.payments_count|pluralize }}</small></td>
+                    <td>
+                        <div class="progress">
+                            <div class="progress-bar bg-success" style="width: {{ row.pct }}%"></div>
+                        </div>
+                        <small class="text-muted">{{ row.pct }}% repaid</small>
+                    </td>
+                    <td>
+                        {% if row.receivable.status == 'active' %}<span class="badge bg-success">Active</span>
+                        {% elif row.receivable.status == 'paid' %}<span class="badge bg-secondary">Paid</span>
+                        {% else %}<span class="badge bg-dark">Written off</span>{% endif %}
+                    </td>
+                    <td class="text-end">
+                        <a href="{% url 'receivable_payment_create' row.receivable.pk %}" class="btn btn-sm btn-outline-success" title="Record repayment"><i class="bi bi-cash"></i></a>
+                        <a href="{% url 'receivable_detail' row.receivable.pk %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-eye"></i></a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="7" class="text-center text-muted py-4">No loans recorded yet. <a href="{% url 'receivable_create' %}">Record one</a>.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% endblock %}

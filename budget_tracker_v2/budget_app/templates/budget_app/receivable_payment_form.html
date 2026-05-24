@@ -1,0 +1,35 @@
+{% extends 'budget_app/base.html' %}
+{% load humanize %}
+{% block title %}Record Repayment{% endblock %}
+{% block content %}
+
+<nav class="mb-3 small">
+    <a href="{% url 'receivable_detail' receivable.pk %}" class="text-decoration-none"><i class="bi bi-chevron-left"></i> {{ receivable.debtor_name }}</a>
+</nav>
+
+<div class="row justify-content-center">
+    <div class="col-lg-6">
+        <div class="card p-4">
+            <h3 class="mb-1"><i class="bi bi-cash text-success"></i> Record Repayment</h3>
+            <p class="text-muted">From <strong>{{ receivable.debtor_name }}</strong>. Outstanding: <strong>{{ receivable.currency.symbol|default:currency_symbol }}{{ receivable.balance|floatformat:2|intcomma }}</strong></p>
+
+            <form method="post" novalidate>
+                {% csrf_token %}
+                {% for field in form %}
+                <div class="mb-3">
+                    <label class="form-label">{{ field.label }}</label>
+                    {{ field }}
+                    {% if field.help_text %}<small class="text-muted d-block">{{ field.help_text }}</small>{% endif %}
+                    {% for e in field.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+                </div>
+                {% endfor %}
+                <div class="d-flex justify-content-between">
+                    <a href="{% url 'receivable_detail' receivable.pk %}" class="text-muted">Cancel</a>
+                    <button class="btn btn-success"><i class="bi bi-check-lg"></i> Record</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

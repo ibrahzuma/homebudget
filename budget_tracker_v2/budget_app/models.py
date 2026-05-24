@@ -759,6 +759,88 @@ class AgreementItem(models.Model):
         return self.target_date < timezone.now().date()
 
 
+# ============================================================
+# RECEIVABLES (people who borrowed from the household)
+# ============================================================
+
+class Receivable(models.Model):
+    """Money the household has lent out — an asset for net worth purposes."""
+    STATUS_ACTIVE = 'active'
+    STATUS_PAID = 'paid'
+    STATUS_WRITTEN_OFF = 'written_off'
+    STATUS_CHOICES = [
+        (STATUS_ACTIVE, 'Active'),
+        (STATUS_PAID, 'Paid in full'),
+        (STATUS_WRITTEN_OFF, 'Written off'),
+    ]
+
+    household = models.ForeignKey(Household, on_delete=models.CASCADE, related_name='receivables')
+    debtor_name = models.CharField(max_length=160, help_text='Who borrowed from you')
+    debtor_contact = models.CharField(max_length=200, blank=True,
+                                       help_text='Phone, email, etc. (optional)')
+    description = models.CharField(max_length=255, blank=True,
+                                    help_text='What was the money for')
+    balance = models.DecimalField(max_digits=14, decimal_places=2,
+                                  help_text='Current outstanding amount')
+    original_amount = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True,
+                                           help_text='Original amount lent (if different from balance)')
+    currency = models.ForeignKey(Currency, on_delete=models.PROTECT, null=True, blank=True)
+    interest_rate = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True,
+                                         help_text='Annual %')
+    lent_date = models.DateField(default=timezone.now)
+    due_date = models.DateField(null=True, blank=True, help_text='When you expect repayment')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_ACTIVE)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-balance']
+
+    def __str__(self):
+        return f"{self.debtor_name}: {self.balance}"
+
+    @property
+    def total_received(self):
+        from decimal import Decimal as D
+        return self.payments.aggregate(s=models.Sum('amount'))['s'] or D('0')
+
+    @property
+    def progress_percent(self):
+        original = self.original_amount or (self.balance + self.total_received)
+        if not original:
+            return 0
+        pct = float(self.total_received) / float(original) * 100
+        return min(round(pct, 1), 100)
+
+    @property
+    def is_overdue(self):
+        if not self.due_date or self.status != self.STATUS_ACTIVE:
+            return False
+        return self.due_date < timezone.now().date()
+
+
+class ReceivablePayment(models.Model):
+    """A repayment received from the borrower — bumps household income, lowers receivable balance."""
+    receivable = models.ForeignKey(Receivable, on_delete=models.CASCADE, related_name='payments')
+    date = models.DateField(default=timezone.now)
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    currency = models.ForeignKey(Currency, on_delete=models.PROTECT, null=True, blank=True)
+    notes = models.TextField(blank=True)
+    # Link to the optional income transaction recorded for this repayment
+    transaction = models.ForeignKey(
+        Transaction, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='receivable_payment_for'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date', '-created_at']
+
+    def __str__(self):
+        return f"Repayment of {self.amount} on {self.date} from {self.receivable.debtor_name}"
+
+
 class NetWorthSnapshot(models.Model):
     """Optional periodic snapshots for tracking net worth over time."""
     household = models.ForeignKey(Household, on_delete=models.CASCADE, related_name='snapshots')

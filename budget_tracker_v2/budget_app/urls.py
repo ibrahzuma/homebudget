@@ -80,6 +80,16 @@ urlpatterns = [
     # Forecast
     path('forecast/', views.forecast_view, name='forecast'),
 
+    # Receivables — people who borrowed from us
+    path('lent/', views.receivable_list, name='receivable_list'),
+    path('lent/new/', views.receivable_create, name='receivable_create'),
+    path('lent/<int:pk>/', views.receivable_detail, name='receivable_detail'),
+    path('lent/<int:pk>/edit/', views.receivable_edit, name='receivable_edit'),
+    path('lent/<int:pk>/delete/', views.receivable_delete, name='receivable_delete'),
+    path('lent/<int:pk>/repayments/new/', views.receivable_payment_create, name='receivable_payment_create'),
+    path('lent/<int:pk>/repayments/<int:payment_pk>/delete/',
+         views.receivable_payment_delete, name='receivable_payment_delete'),
+
     # Savings goals
     path('goals/', views.goal_list, name='goal_list'),
     path('goals/new/', views.goal_create, name='goal_create'),

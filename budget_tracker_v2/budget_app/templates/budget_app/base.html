@@ -230,8 +230,11 @@
         <a href="{% url 'networth' %}" class="sidebar-link {% if request.resolver_match.url_name == 'networth' %}active{% endif %}">
             <i class="bi bi-bank"></i> Net Worth
         </a>
-        <a href="{% url 'debt_list' %}" class="sidebar-link {% if 'debt' in request.resolver_match.url_name or 'payment' in request.resolver_match.url_name or 'liability' in request.resolver_match.url_name %}active{% endif %}">
+        <a href="{% url 'debt_list' %}" class="sidebar-link {% if 'debt' in request.resolver_match.url_name or request.resolver_match.url_name == 'payment_create' or request.resolver_match.url_name == 'payment_delete' or 'liability' in request.resolver_match.url_name %}active{% endif %}">
             <i class="bi bi-cash-coin"></i> Debts &amp; Payments
+        </a>
+        <a href="{% url 'receivable_list' %}" class="sidebar-link {% if 'receivable' in request.resolver_match.url_name %}active{% endif %}">
+            <i class="bi bi-hand-thumbs-up"></i> Lent to Others
         </a>
         <a href="{% url 'goal_list' %}" class="sidebar-link {% if 'goal' in request.resolver_match.url_name %}active{% endif %}">
             <i class="bi bi-piggy-bank"></i> Savings Goals

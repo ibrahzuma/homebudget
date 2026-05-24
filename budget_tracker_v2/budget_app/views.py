@@ -23,12 +23,14 @@ from .forms import (
     CurrencyForm, ExchangeRateForm,
     MeetingForm, AgreementItemForm,
     GoalForm, GoalContributionForm, ProjectForm,
+    ReceivableForm, ReceivablePaymentForm,
 )
 from .models import (
     Household, Transaction, Category, Budget, RecurringTransaction,
     CategoryRule, Alert, MoneyRequest, Asset, Liability, LiabilityPayment,
     NetWorthSnapshot, Currency, ExchangeRate,
     Meeting, AgreementItem, Goal, GoalContribution, Project,
+    Receivable, ReceivablePayment,
 )
 from .services import (
     apply_category_rules, apply_due_recurring, upcoming_recurring,
@@ -243,6 +245,19 @@ def dashboard(request):
     forecast = forecast_end_of_month(household)
     networth = compute_net_worth(household)
 
+    # Credit (owed to us) and debit (we owe)
+    total_lent_out = sum(
+        (Decimal(r.balance) for r in household.receivables.filter(status=Receivable.STATUS_ACTIVE)),
+        Decimal('0')
+    )
+    total_owed = sum(
+        (Decimal(l.balance) for l in household.liabilities.all()),
+        Decimal('0')
+    )
+    overdue_lent = household.receivables.filter(
+        status=Receivable.STATUS_ACTIVE, due_date__lt=today
+    ).count()
+
     pending_my_approvals = MoneyRequest.objects.filter(
         household=household, approver=request.user, status=MoneyRequest.STATUS_PENDING
     )
@@ -267,6 +282,9 @@ def dashboard(request):
         'pending_my_approvals': pending_my_approvals,
         'active_goals': active_goals,
         'next_meeting': next_meeting,
+        'total_lent_out': total_lent_out,
+        'total_owed': total_owed,
+        'overdue_lent': overdue_lent,
     }
     return render(request, 'budget_app/dashboard.html', context)
 
@@ -1738,3 +1756,200 @@ def project_delete(request, pk):
         messages.info(request, "Project removed.")
         return redirect('project_list')
     return render(request, 'budget_app/project_confirm_delete.html', {'project': project})
+
+
+# ============================================================
+# RECEIVABLES (people who borrowed from us)
+# ============================================================
+
+@login_required
+@ensure_household
+def receivable_list(request):
+    household = get_user_household(request.user)
+    receivables = household.receivables.select_related('currency').all()
+    rows = []
+    total_outstanding = Decimal('0')
+    total_received = Decimal('0')
+    overdue_count = 0
+    today = timezone.now().date()
+    for r in receivables:
+        received = r.total_received
+        original = r.original_amount or (r.balance + received)
+        rows.append({
+            'receivable': r, 'received': received, 'original': original,
+            'pct': r.progress_percent,
+            'payments_count': r.payments.count(),
+            'is_overdue': r.is_overdue,
+        })
+        if r.status == Receivable.STATUS_ACTIVE:
+            total_outstanding += r.balance
+        total_received += received
+        if r.is_overdue:
+            overdue_count += 1
+    return render(request, 'budget_app/receivable_list.html', {
+        'rows': rows,
+        'total_outstanding': total_outstanding,
+        'total_received': total_received,
+        'overdue_count': overdue_count,
+    })
+
+
+@login_required
+@ensure_household
+def receivable_create(request):
+    household = get_user_household(request.user)
+    if request.method == 'POST':
+        form = ReceivableForm(request.POST, household=household)
+        if form.is_valid():
+            with db_transaction.atomic():
+                r = form.save(commit=False)
+                r.household = household
+                if not r.currency:
+                    r.currency = household.base_currency
+                if not r.original_amount:
+                    r.original_amount = r.balance
+                r.save()
+                # Optionally record the lending as a one-off expense
+                if form.cleaned_data.get('record_as_expense'):
+                    cat, _ = Category.objects.get_or_create(
+                        household=household, name='Lent to Others',
+                        category_type=Category.EXPENSE,
+                        defaults={'color': '#fd7e14', 'icon': 'bi-cash-stack'},
+                    )
+                    Transaction.objects.create(
+                        household=household, user=request.user,
+                        category=cat, transaction_type=Transaction.EXPENSE,
+                        amount=r.balance,
+                        currency=r.currency,
+                        description=f"Lent to {r.debtor_name}",
+                        payee=r.debtor_name,
+                        date=r.lent_date,
+                        source=Transaction.SOURCE_MANUAL,
+                    )
+            messages.success(request, f"Recorded loan to {r.debtor_name}.")
+            return redirect('receivable_detail', pk=r.pk)
+    else:
+        form = ReceivableForm(household=household,
+                              initial={'currency': household.base_currency,
+                                       'lent_date': timezone.now().date()})
+    return render(request, 'budget_app/receivable_form.html', {
+        'form': form, 'title': 'Record a Loan Out',
+    })
+
+
+@login_required
+@ensure_household
+def receivable_detail(request, pk):
+    household = get_user_household(request.user)
+    receivable = get_object_or_404(Receivable, pk=pk, household=household)
+    payments = receivable.payments.select_related('currency', 'transaction').all()
+    received = receivable.total_received
+    original = receivable.original_amount or (receivable.balance + received)
+    return render(request, 'budget_app/receivable_detail.html', {
+        'receivable': receivable,
+        'payments': payments,
+        'received': received,
+        'original': original,
+        'pct': receivable.progress_percent,
+    })
+
+
+@login_required
+@ensure_household
+def receivable_edit(request, pk):
+    household = get_user_household(request.user)
+    receivable = get_object_or_404(Receivable, pk=pk, household=household)
+    if request.method == 'POST':
+        form = ReceivableForm(request.POST, instance=receivable, household=household)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Loan updated.")
+            return redirect('receivable_detail', pk=receivable.pk)
+    else:
+        form = ReceivableForm(instance=receivable, household=household)
+    return render(request, 'budget_app/receivable_form.html', {
+        'form': form, 'title': 'Edit Loan',
+    })
+
+
+@login_required
+@ensure_household
+def receivable_delete(request, pk):
+    household = get_user_household(request.user)
+    receivable = get_object_or_404(Receivable, pk=pk, household=household)
+    if request.method == 'POST':
+        receivable.delete()
+        messages.info(request, "Loan removed.")
+        return redirect('receivable_list')
+    return render(request, 'budget_app/receivable_confirm_delete.html', {'receivable': receivable})
+
+
+@login_required
+@ensure_household
+def receivable_payment_create(request, pk):
+    household = get_user_household(request.user)
+    receivable = get_object_or_404(Receivable, pk=pk, household=household)
+    if request.method == 'POST':
+        form = ReceivablePaymentForm(request.POST, household=household, receivable=receivable)
+        if form.is_valid():
+            with db_transaction.atomic():
+                payment = form.save(commit=False)
+                payment.receivable = receivable
+                if not payment.currency:
+                    payment.currency = receivable.currency or household.base_currency
+                if form.cleaned_data.get('record_as_income'):
+                    cat, _ = Category.objects.get_or_create(
+                        household=household, name='Loan Repayments',
+                        category_type=Category.INCOME,
+                        defaults={'color': '#20c997', 'icon': 'bi-cash-stack'},
+                    )
+                    tx = Transaction.objects.create(
+                        household=household, user=request.user,
+                        category=cat, transaction_type=Transaction.INCOME,
+                        amount=payment.amount, currency=payment.currency,
+                        description=f"Repayment from {receivable.debtor_name}",
+                        payee=receivable.debtor_name,
+                        date=payment.date,
+                        source=Transaction.SOURCE_MANUAL,
+                    )
+                    payment.transaction = tx
+                payment.save()
+                # Decrement outstanding balance, clamped at 0
+                new_balance = max(Decimal('0'),
+                                  Decimal(receivable.balance) - Decimal(payment.amount))
+                fields = {'balance': new_balance}
+                # Auto-mark fully paid
+                if new_balance == 0 and receivable.status == Receivable.STATUS_ACTIVE:
+                    fields['status'] = Receivable.STATUS_PAID
+                Receivable.objects.filter(pk=receivable.pk).update(**fields)
+            messages.success(request, f"Recorded repayment of {payment.amount}.")
+            return redirect('receivable_detail', pk=receivable.pk)
+    else:
+        form = ReceivablePaymentForm(household=household, receivable=receivable,
+                                     initial={'date': timezone.now().date(),
+                                              'amount': receivable.balance})
+    return render(request, 'budget_app/receivable_payment_form.html', {
+        'form': form, 'receivable': receivable,
+    })
+
+
+@login_required
+@ensure_household
+def receivable_payment_delete(request, pk, payment_pk):
+    household = get_user_household(request.user)
+    receivable = get_object_or_404(Receivable, pk=pk, household=household)
+    payment = get_object_or_404(ReceivablePayment, pk=payment_pk, receivable=receivable)
+    if request.method == 'POST':
+        with db_transaction.atomic():
+            Receivable.objects.filter(pk=receivable.pk).update(
+                balance=Decimal(receivable.balance) + Decimal(payment.amount),
+                status=Receivable.STATUS_ACTIVE,
+            )
+            if payment.transaction_id:
+                payment.transaction.delete()
+            payment.delete()
+        messages.info(request, "Repayment removed and balance restored.")
+        return redirect('receivable_detail', pk=receivable.pk)
+    return render(request, 'budget_app/receivable_payment_confirm_delete.html', {
+        'receivable': receivable, 'payment': payment,
+    })
