@@ -107,6 +107,11 @@ urlpatterns = [
     path('projects/<int:pk>/edit/', views.project_edit, name='project_edit'),
     path('projects/<int:pk>/delete/', views.project_delete, name='project_delete'),
 
+    # Household chat
+    path('chat/', views.chat_view, name='chat'),
+    path('chat/send/', views.chat_send, name='chat_send'),
+    path('chat/recent/', views.chat_recent, name='chat_recent'),
+
     # Meetings & agreements
     path('meetings/', views.meeting_list, name='meeting_list'),
     path('meetings/new/', views.meeting_create, name='meeting_create'),

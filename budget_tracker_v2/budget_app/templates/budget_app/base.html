@@ -290,6 +290,141 @@
             }
             .sidebar-overlay.show { display: block; }
         }
+
+        /* Floating chat widget */
+        .chat-fab {
+            position: fixed; right: 22px; bottom: 22px;
+            width: 58px; height: 58px;
+            border-radius: 999px;
+            background: linear-gradient(135deg, #3b82f6, #0ea5e9);
+            color: white; border: 0;
+            display: grid; place-items: center;
+            box-shadow: 0 10px 28px -6px rgba(59,130,246,0.55);
+            font-size: 1.5rem;
+            z-index: 9995;
+            cursor: pointer;
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+        .chat-fab:hover { transform: translateY(-2px); box-shadow: 0 14px 32px -6px rgba(59,130,246,0.7); }
+        .chat-fab:active { transform: translateY(0); }
+        .chat-fab .fab-badge {
+            position: absolute; top: -4px; right: -4px;
+            background: #dc3545; color: white;
+            font-size: 0.7rem; font-weight: 700;
+            padding: 2px 6px; border-radius: 999px;
+            border: 2px solid white;
+            min-width: 22px; text-align: center;
+        }
+        .chat-fab .fab-badge:empty { display: none; }
+
+        .chat-panel {
+            position: fixed; right: 22px; bottom: 92px;
+            width: 360px; height: 540px; max-height: calc(100vh - 120px);
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 24px 60px rgba(15, 23, 42, 0.25);
+            display: flex; flex-direction: column;
+            overflow: hidden;
+            opacity: 0; transform: translateY(20px) scale(0.96);
+            pointer-events: none;
+            transition: opacity 0.18s ease, transform 0.22s ease;
+            z-index: 9995;
+        }
+        .chat-panel.open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+        .chat-panel header {
+            padding: 0.85rem 1rem;
+            background: linear-gradient(135deg, #3b82f6, #0ea5e9);
+            color: white;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .chat-panel header h6 { margin: 0; font-size: 0.95rem; font-weight: 600; }
+        .chat-panel header .members { font-size: 0.72rem; opacity: 0.85; display: block; }
+        .chat-panel header .conn-dot {
+            display: inline-block; width: 8px; height: 8px;
+            border-radius: 999px; margin-left: 0.35rem; background: #f87171;
+            transition: background 0.2s; vertical-align: middle;
+        }
+        .chat-panel header .conn-dot.connected { background: #4ade80; }
+        .chat-panel header .panel-close {
+            background: rgba(255,255,255,0.15); border: 0; color: white;
+            width: 28px; height: 28px; border-radius: 999px;
+            display: grid; place-items: center; cursor: pointer;
+            font-size: 1rem;
+        }
+        .chat-panel header .panel-close:hover { background: rgba(255,255,255,0.28); }
+
+        .chat-panel .messages {
+            flex: 1; overflow-y: auto;
+            padding: 0.85rem;
+            background: #f5f7fb;
+        }
+        .chat-msg-row {
+            display: flex; gap: 0.5rem; margin-bottom: 0.65rem; align-items: flex-end;
+        }
+        .chat-msg-row.own { flex-direction: row-reverse; }
+        .chat-msg-row .avatar {
+            width: 28px; height: 28px; border-radius: 999px;
+            background: linear-gradient(135deg, #64748b, #475569);
+            color: white; font-size: 0.75rem; font-weight: 600;
+            display: grid; place-items: center; flex-shrink: 0;
+        }
+        .chat-msg-row.own .avatar { background: linear-gradient(135deg, #3b82f6, #0ea5e9); }
+        .chat-msg-row .bubble {
+            background: white;
+            padding: 0.5rem 0.75rem;
+            border-radius: 12px;
+            max-width: 78%;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+            font-size: 0.88rem;
+            line-height: 1.35;
+        }
+        .chat-msg-row.own .bubble {
+            background: linear-gradient(135deg, #3b82f6, #0ea5e9);
+            color: white;
+        }
+        .chat-msg-row .bubble .meta {
+            font-size: 0.68rem; opacity: 0.75;
+            margin-bottom: 0.1rem;
+            display: flex; justify-content: space-between; gap: 0.4rem;
+        }
+        .chat-msg-row.own .bubble .meta { color: rgba(255,255,255,0.9); }
+        .chat-msg-row .bubble .body { white-space: pre-wrap; word-wrap: break-word; }
+        .chat-empty-state { text-align: center; color: #94a3b8; padding: 2.5rem 1rem; font-size: 0.85rem; }
+        .chat-loading-state { text-align: center; color: #94a3b8; padding: 1rem; font-size: 0.85rem; }
+
+        .chat-compose {
+            padding: 0.6rem 0.7rem;
+            border-top: 1px solid #e2e8f0;
+            background: white;
+            display: flex; gap: 0.4rem; align-items: end;
+        }
+        .chat-compose textarea {
+            flex: 1; resize: none; max-height: 100px;
+            border-radius: 10px; border: 1px solid #e2e8f0;
+            padding: 0.45rem 0.7rem; font-size: 0.88rem;
+            font-family: inherit;
+        }
+        .chat-compose textarea:focus {
+            outline: 0; border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
+        }
+        .chat-compose button {
+            background: linear-gradient(135deg, #3b82f6, #0ea5e9);
+            color: white; border: 0;
+            width: 38px; height: 38px;
+            border-radius: 10px; cursor: pointer;
+            flex-shrink: 0;
+        }
+        .chat-compose button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        @media (max-width: 480px) {
+            .chat-panel {
+                right: 12px; left: 12px;
+                width: auto; bottom: 86px;
+                height: calc(100vh - 110px);
+            }
+            .chat-fab { right: 16px; bottom: 16px; }
+        }
     </style>
 </head>
 <body>
@@ -303,7 +438,7 @@
 </div>
 
 <!-- Live toast notifications (populated by the WebSocket client) -->
-<div class="toast-container position-fixed bottom-0 end-0 p-3" id="liveToasts" style="z-index: 9990;"></div>
+<div class="toast-container position-fixed top-0 end-0 p-3" id="liveToasts" style="z-index: 9990; margin-top: 60px;"></div>
 
 {% if user.is_authenticated and current_household %}
 <aside class="sidebar d-flex flex-column" id="sidebar">
@@ -438,6 +573,38 @@
     {% block content %}{% endblock %}
 </main>
 
+{% if user.is_authenticated and current_household %}
+<!-- Floating chat widget -->
+<button class="chat-fab" id="chatFab" type="button" aria-label="Open household chat">
+    <i class="bi bi-chat-dots-fill"></i>
+    <span class="fab-badge" id="chatFabBadge">{% if unread_chat_count %}{{ unread_chat_count }}{% endif %}</span>
+</button>
+
+<aside class="chat-panel" id="chatPanel" aria-hidden="true">
+    <header>
+        <div>
+            <h6>Household chat</h6>
+            <span class="members">
+                {% for m in current_household.members.all %}{{ m.username }}{% if not forloop.last %}, {% endif %}{% endfor %}
+                <span class="conn-dot" id="chatConnDot" title="Realtime connection"></span>
+            </span>
+        </div>
+        <button type="button" class="panel-close" id="chatPanelClose" aria-label="Close">
+            <i class="bi bi-x-lg"></i>
+        </button>
+    </header>
+    <div class="messages" id="chatMessages">
+        <div class="chat-loading-state">Loading…</div>
+    </div>
+    <form class="chat-compose" id="chatComposeForm" method="post" action="{% url 'chat_send' %}">
+        {% csrf_token %}
+        <textarea name="body" id="chatComposeInput" rows="1" placeholder="Write a message…"
+                  maxlength="4000" required></textarea>
+        <button type="submit" title="Send"><i class="bi bi-send"></i></button>
+    </form>
+</aside>
+{% endif %}
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script>
     // ---- Page-load progress bar + button-spinner on submit ----
@@ -533,6 +700,135 @@
     }
 
     {% if user.is_authenticated and current_household %}
+    // ---- Floating chat widget ----
+    (function () {
+        const fab        = document.getElementById('chatFab');
+        const panel      = document.getElementById('chatPanel');
+        const closeBtn   = document.getElementById('chatPanelClose');
+        const messages   = document.getElementById('chatMessages');
+        const composeF   = document.getElementById('chatComposeForm');
+        const composeI   = document.getElementById('chatComposeInput');
+        const fabBadge   = document.getElementById('chatFabBadge');
+        const connDot    = document.getElementById('chatConnDot');
+        const csrftoken  = composeF.querySelector('[name=csrfmiddlewaretoken]').value;
+        const currentUserId = {{ user.id }};
+        let loaded = false;
+
+        function esc(s) {
+            return (s || '').replace(/[&<>"']/g, c => ({
+                '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+            }[c]));
+        }
+
+        function scrollBottom(force) {
+            const near = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 100;
+            if (force || near) messages.scrollTop = messages.scrollHeight;
+        }
+
+        function renderMessage(m) {
+            if (messages.querySelector(`[data-msg-id="${m.id}"]`)) return;
+            const empty = messages.querySelector('.chat-empty-state, .chat-loading-state');
+            if (empty) empty.remove();
+            const own = m.sender_id === currentUserId;
+            const row = document.createElement('div');
+            row.className = 'chat-msg-row' + (own ? ' own' : '');
+            row.dataset.msgId = m.id;
+            const initial = (m.sender_name || '?').slice(0,1).toUpperCase();
+            row.innerHTML =
+                '<div class="avatar">' + esc(initial) + '</div>' +
+                '<div class="bubble">' +
+                    '<div class="meta"><strong>' + esc(m.sender_name) + '</strong>' +
+                        '<span>' + esc(m.created_at_display || '') + '</span></div>' +
+                    '<div class="body">' + esc(m.body) + '</div>' +
+                '</div>';
+            messages.appendChild(row);
+            scrollBottom(own);
+        }
+
+        function loadHistory() {
+            if (loaded) return Promise.resolve();
+            return fetch('{% url "chat_recent" %}', {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            }).then(r => r.json()).then(data => {
+                messages.innerHTML = '';
+                if (!data.messages || data.messages.length === 0) {
+                    messages.innerHTML = '<div class="chat-empty-state"><i class="bi bi-chat-dots fs-2 d-block mb-2"></i>No messages yet. Say hello.</div>';
+                } else {
+                    data.messages.forEach(renderMessage);
+                }
+                loaded = true;
+                scrollBottom(true);
+                clearBadge();
+            });
+        }
+
+        function openPanel() {
+            panel.classList.add('open');
+            panel.setAttribute('aria-hidden', 'false');
+            loadHistory();
+            clearBadge();
+            setTimeout(() => composeI.focus(), 220);
+        }
+        function closePanel() {
+            panel.classList.remove('open');
+            panel.setAttribute('aria-hidden', 'true');
+        }
+        function clearBadge() {
+            if (fabBadge) fabBadge.textContent = '';
+            document.querySelectorAll('[data-unread-chat]').forEach(b => b.remove());
+        }
+        function bumpBadge() {
+            if (!fabBadge) return;
+            const cur = parseInt(fabBadge.textContent || '0', 10) || 0;
+            fabBadge.textContent = (cur + 1).toString();
+        }
+
+        fab.addEventListener('click', () => panel.classList.contains('open') ? closePanel() : openPanel());
+        closeBtn.addEventListener('click', closePanel);
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape' && panel.classList.contains('open')) closePanel();
+        });
+
+        // Auto-grow textarea, Enter to send, Shift+Enter for newline
+        composeI.addEventListener('input', () => {
+            composeI.style.height = 'auto';
+            composeI.style.height = Math.min(composeI.scrollHeight, 100) + 'px';
+        });
+        composeI.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); composeF.requestSubmit(); }
+        });
+
+        composeF.addEventListener('submit', async e => {
+            e.preventDefault();
+            const text = composeI.value.trim();
+            if (!text) return;
+            composeI.value = ''; composeI.style.height = '';
+            try {
+                await fetch(composeF.action, {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': csrftoken, 'X-Requested-With': 'XMLHttpRequest' },
+                    body: new URLSearchParams({ body: text, csrfmiddlewaretoken: csrftoken }),
+                });
+            } catch (_) {
+                composeI.value = text;  // restore on failure
+            }
+        });
+
+        // Receive live messages from the global WS client
+        window.addEventListener('chat-event', e => {
+            renderMessage(e.detail);
+            if (panel.classList.contains('open')) {
+                clearBadge();   // viewing chat already → mark read
+            } else if (e.detail.sender_id !== currentUserId) {
+                bumpBadge();
+            }
+        });
+        // Sync the connection dot from the WS status events
+        window.addEventListener('ws-status', e => {
+            if (connDot) connDot.classList.toggle('connected', !!e.detail.connected);
+        });
+    })();
+
     // ---- WebSocket live notifications ----
     (function () {
         const currentUserId = {{ user.id }};
@@ -569,6 +865,14 @@
         }
 
         function handle(payload) {
+            // Chat messages fan out to a separate listener (chat page handles
+            // its own append/dedupe); also bump the sidebar badge unless the
+            // user is currently on the chat page.
+            if (payload.kind === 'chat.new') {
+                // The floating chat widget handles append + FAB badge bump.
+                window.dispatchEvent(new CustomEvent('chat-event', { detail: payload }));
+                return;
+            }
             // Filter messages targeted at a specific user (e.g. only the approver
             // gets a "you have a new request" toast)
             if (payload.for_user_id && payload.for_user_id !== currentUserId) return;
@@ -583,11 +887,15 @@
 
         function connect() {
             ws = new WebSocket(proto + '://' + location.host + '/ws/notify/');
-            ws.onopen = () => { retryDelay = 1000; };
+            ws.onopen = () => {
+                retryDelay = 1000;
+                window.dispatchEvent(new CustomEvent('ws-status', { detail: { connected: true } }));
+            };
             ws.onmessage = (e) => {
                 try { handle(JSON.parse(e.data)); } catch (_) {}
             };
             ws.onclose = () => {
+                window.dispatchEvent(new CustomEvent('ws-status', { detail: { connected: false } }));
                 // Exponential backoff up to 30s
                 setTimeout(connect, retryDelay);
                 retryDelay = Math.min(retryDelay * 2, 30000);

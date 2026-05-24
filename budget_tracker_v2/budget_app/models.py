@@ -760,6 +760,37 @@ class AgreementItem(models.Model):
 
 
 # ============================================================
+# HOUSEHOLD CHAT
+# ============================================================
+
+class ChatMessage(models.Model):
+    household = models.ForeignKey(Household, on_delete=models.CASCADE, related_name='chat_messages')
+    sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name='chat_sent')
+    body = models.TextField(max_length=4000)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at']
+        indexes = [models.Index(fields=['household', 'created_at'])]
+
+    def __str__(self):
+        return f"{self.sender.username}: {self.body[:40]}"
+
+
+class ChatReadState(models.Model):
+    """Tracks per-user last-read timestamp so we can compute an unread badge."""
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='chat_reads')
+    household = models.ForeignKey(Household, on_delete=models.CASCADE, related_name='chat_reads')
+    last_read_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        unique_together = ('user', 'household')
+
+    def __str__(self):
+        return f"{self.user.username}@{self.household.name} -> {self.last_read_at}"
+
+
+# ============================================================
 # RECEIVABLES (people who borrowed from the household)
 # ============================================================
 

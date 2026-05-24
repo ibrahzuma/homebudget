@@ -30,7 +30,7 @@ from .models import (
     CategoryRule, Alert, MoneyRequest, Asset, Liability, LiabilityPayment,
     NetWorthSnapshot, Currency, ExchangeRate,
     Meeting, AgreementItem, Goal, GoalContribution, Project,
-    Receivable, ReceivablePayment,
+    Receivable, ReceivablePayment, ChatMessage, ChatReadState,
 )
 from .services import (
     apply_category_rules, apply_due_recurring, upcoming_recurring,
@@ -1974,3 +1974,82 @@ def receivable_payment_delete(request, pk, payment_pk):
     return render(request, 'budget_app/receivable_payment_confirm_delete.html', {
         'receivable': receivable, 'payment': payment,
     })
+
+
+# ============================================================
+# HOUSEHOLD CHAT
+# ============================================================
+
+@login_required
+@ensure_household
+def chat_view(request):
+    household = get_user_household(request.user)
+    messages_qs = household.chat_messages.select_related('sender').all()
+    # Mark all chat as read for this user
+    ChatReadState.objects.update_or_create(
+        user=request.user, household=household,
+        defaults={'last_read_at': timezone.now()},
+    )
+    return render(request, 'budget_app/chat.html', {
+        'chat_messages': messages_qs,
+        'members': household.members.all(),
+    })
+
+
+@login_required
+@ensure_household
+def chat_recent(request):
+    """JSON feed of the last N chat messages — used by the floating widget on open."""
+    household = get_user_household(request.user)
+    limit = min(int(request.GET.get('limit', 50)), 200)
+    qs = household.chat_messages.select_related('sender').order_by('-created_at')[:limit]
+    # Reverse so the JS gets them oldest-first (so it can append without sorting)
+    messages_list = list(reversed(list(qs)))
+    # Mark as read when the widget loads them
+    ChatReadState.objects.update_or_create(
+        user=request.user, household=household,
+        defaults={'last_read_at': timezone.now()},
+    )
+    return JsonResponse({
+        'messages': [
+            {
+                'id': m.id,
+                'sender_id': m.sender_id,
+                'sender_name': m.sender.username,
+                'body': m.body,
+                'created_at_display': timezone.localtime(m.created_at).strftime('%b %d, %H:%M'),
+            }
+            for m in messages_list
+        ]
+    })
+
+
+@login_required
+@ensure_household
+def chat_send(request):
+    household = get_user_household(request.user)
+    if request.method != 'POST':
+        return redirect('chat')
+    body = (request.POST.get('body') or '').strip()
+    if not body:
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return JsonResponse({'ok': False, 'error': 'empty'}, status=400)
+        return redirect('chat')
+    msg = ChatMessage.objects.create(household=household, sender=request.user, body=body[:4000])
+    # Mark sender's last-read up to (and including) this message
+    ChatReadState.objects.update_or_create(
+        user=request.user, household=household,
+        defaults={'last_read_at': msg.created_at},
+    )
+    push_to_household(household, {
+        'kind': 'chat.new',
+        'id': msg.id,
+        'sender_id': msg.sender_id,
+        'sender_name': msg.sender.username,
+        'body': msg.body,
+        'created_at': msg.created_at.isoformat(),
+        'created_at_display': timezone.localtime(msg.created_at).strftime('%b %d, %H:%M'),
+    })
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return JsonResponse({'ok': True, 'id': msg.id})
+    return redirect('chat')
