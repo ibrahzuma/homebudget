@@ -5,6 +5,32 @@ from decimal import Decimal
 from django.db.models import Sum
 from django.utils import timezone
 
+
+# ============================================================
+# Real-time push (Django Channels)
+# ============================================================
+
+def push_to_household(household, payload):
+    """Fan an event out to every WebSocket connected to this household.
+
+    `payload` should be a JSON-serialisable dict with at minimum {'kind': '...'}
+    so the JS client can route the message. Safe to call from any sync code —
+    no-ops cleanly if Channels isn't configured.
+    """
+    try:
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        layer = get_channel_layer()
+        if not layer or not household:
+            return
+        async_to_sync(layer.group_send)(
+            f'household_{household.id}',
+            {'type': 'notify', 'payload': payload},
+        )
+    except Exception:
+        # Don't ever break a request because the push failed (e.g. dev without channels).
+        pass
+
 from .models import (
     Transaction, Budget, RecurringTransaction, Alert,
     CategoryRule, Asset, Liability, NetWorthSnapshot, ExchangeRate,

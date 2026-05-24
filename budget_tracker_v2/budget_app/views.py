@@ -35,7 +35,7 @@ from .models import (
 from .services import (
     apply_category_rules, apply_due_recurring, upcoming_recurring,
     check_budget_alerts, forecast_end_of_month, compute_net_worth,
-    bills_in_month, month_range,
+    bills_in_month, month_range, push_to_household,
 )
 
 
@@ -778,6 +778,13 @@ def request_create(request):
                 level=Alert.LEVEL_INFO,
                 link_url=f"/requests/{r.pk}/",
             )
+            push_to_household(household, {
+                'kind': 'request.created',
+                'message': f"New money request from {request.user.username} for {r.purpose}",
+                'link': f'/requests/{r.pk}/',
+                'level': 'info',
+                'for_user_id': r.approver_id,
+            })
             messages.success(request, "Request sent.")
             return redirect('request_list')
     else:
@@ -840,6 +847,13 @@ def request_detail(request, pk):
                     level=Alert.LEVEL_INFO,
                 )
                 check_budget_alerts(household)
+            push_to_household(household, {
+                'kind': 'request.approved',
+                'message': f"{request.user.username} approved your request: {money_request.purpose}",
+                'link': f'/requests/{money_request.pk}/',
+                'level': 'success',
+                'for_user_id': money_request.requester_id,
+            })
             messages.success(request, "Request approved and transactions recorded.")
             return redirect('request_detail', pk=pk)
 
@@ -855,6 +869,13 @@ def request_detail(request, pk):
                         + (f" Note: {note}" if note else ""),
                 level=Alert.LEVEL_WARNING,
             )
+            push_to_household(household, {
+                'kind': 'request.rejected',
+                'message': f"{request.user.username} rejected your request: {money_request.purpose}",
+                'link': f'/requests/{money_request.pk}/',
+                'level': 'warning',
+                'for_user_id': money_request.requester_id,
+            })
             messages.info(request, "Request rejected.")
             return redirect('request_detail', pk=pk)
 
