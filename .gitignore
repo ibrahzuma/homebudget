@@ -1,0 +1,26 @@
+# Secrets — production keeps these in /opt/homebudget/.env, never in the repo
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Django
+staticfiles/
+media/
+*.log
+
+# Local databases. db.sqlite3 is currently tracked (see README); new ones aren't.
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Backups produced by deploy/backup-db.py
+backups/
+db-*.sqlite3.gz
+pg-*.dump
