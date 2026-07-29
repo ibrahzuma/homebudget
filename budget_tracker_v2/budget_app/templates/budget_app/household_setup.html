@@ -19,6 +19,21 @@
                 <button type="submit" class="btn btn-primary w-100">Create Household</button>
             </form>
         </div>
+
+        <div class="card p-4 mt-3">
+            <h5 class="mb-1"><i class="bi bi-link-45deg text-primary"></i> Been invited?</h5>
+            <p class="text-muted small mb-3">
+                If your partner already has a household, paste their invite link or code here
+                to join it instead of creating your own.
+            </p>
+            <form method="post" class="d-flex gap-2">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="join">
+                <input type="text" name="code" class="form-control" required
+                       placeholder="Invite link or code">
+                <button type="submit" class="btn btn-outline-primary text-nowrap">Join</button>
+            </form>
+        </div>
     </div>
 </div>
 {% endblock %}

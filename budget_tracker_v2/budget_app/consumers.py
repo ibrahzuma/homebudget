@@ -34,7 +34,8 @@ class NotificationConsumer(AsyncWebsocketConsumer):
 
     @staticmethod
     def _user_household(user):
-        return user.households.first()
+        from .models import resolve_user_household
+        return resolve_user_household(user)
 
     # ---- Group event handlers (called when something is broadcast) ----
 

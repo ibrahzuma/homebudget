@@ -31,6 +31,7 @@ from .models import (
     NetWorthSnapshot, Currency, ExchangeRate,
     Meeting, AgreementItem, Goal, GoalContribution, Project,
     Receivable, ReceivablePayment, ChatMessage, ChatReadState,
+    HouseholdInvitation, resolve_user_household,
 )
 from .services import (
     apply_category_rules, apply_due_recurring, upcoming_recurring,
@@ -44,7 +45,7 @@ from .services import (
 # ============================================================
 
 def get_user_household(user):
-    return user.households.first()
+    return resolve_user_household(user)
 
 
 def ensure_household(view):
@@ -56,6 +57,50 @@ def ensure_household(view):
         return view(request, *args, **kwargs)
     wrapper.__name__ = view.__name__
     return wrapper
+
+
+def add_member_to_household(household, user):
+    """Add ``user`` to ``household``, cleaning up the stub household they were
+    forced to create at signup.
+
+    Returns a ``(level, message)`` pair for ``messages.<level>``.
+
+    Every new account is pushed through /household/setup/, so an invited partner
+    almost always owns a throwaway solo household by the time they are added
+    here. Left in place it competes with the shared household when resolving
+    which one they see. If that leftover holds nothing the user authored it is
+    just signup residue and is deleted; if it holds real data we keep it (and
+    say so) rather than cascade-deleting the user's records.
+    """
+    if household.members.filter(pk=user.pk).exists():
+        return 'info', f"{user.username} is already a member of this household."
+
+    household.members.add(user)
+
+    # Everything a user can author. Seeded categories/currencies don't count —
+    # those exist in every brand-new household.
+    user_data = ('transactions', 'budgets', 'recurring_transactions', 'assets',
+                 'liabilities', 'goals', 'projects', 'meetings', 'receivables',
+                 'chat_messages', 'money_requests')
+
+    kept = []
+    for other in user.households.exclude(pk=household.pk):
+        is_empty_stub = (
+            other.members.count() == 1
+            and not any(getattr(other, rel).exists() for rel in user_data)
+        )
+        if is_empty_stub:
+            other.delete()
+        else:
+            kept.append(other.name)
+
+    if kept:
+        return 'warning', (
+            f"{user.username} added, but they still belong to: {', '.join(kept)}. "
+            f"Those households hold data, so they were left alone — "
+            f"{user.username} will now see '{household.name}'."
+        )
+    return 'success', f"{user.username} added to {household.name}."
 
 
 def seed_household_defaults(household):
@@ -101,17 +146,36 @@ def seed_household_defaults(household):
 # AUTH
 # ============================================================
 
+INVITE_SESSION_KEY = '_pending_invite_code'
+
+
 def signup_view(request):
+    # An invite code can ride along the signup URL (?invite=...) so a partner
+    # who follows a link lands in the shared household instead of being sent to
+    # /household/setup/ to create one of their own.
+    invite_code = request.GET.get('invite') or request.POST.get('invite') or ''
+    invite = None
+    if invite_code:
+        invite = HouseholdInvitation.objects.filter(code=invite_code).first()
+        if invite and not invite.is_usable:
+            invite = None
+
     if request.method == 'POST':
         form = SignUpForm(request.POST)
         if form.is_valid():
             user = form.save()
             login(request, user)
+            if invite:
+                # Remember it across the redirect; invite_accept does the work.
+                request.session[INVITE_SESSION_KEY] = invite.code
+                return redirect('invite_accept', code=invite.code)
             messages.success(request, "Account created. Now set up your household.")
             return redirect('household_setup')
     else:
         form = SignUpForm()
-    return render(request, 'budget_app/signup.html', {'form': form})
+    return render(request, 'budget_app/signup.html', {
+        'form': form, 'invite': invite, 'invite_code': invite.code if invite else '',
+    })
 
 
 # ============================================================
@@ -130,6 +194,28 @@ def household_setup(request):
     if get_user_household(request.user):
         return redirect('dashboard')
 
+    # Followed an invite link before signing in? Go straight to the join page
+    # rather than making them create a household they don't want.
+    pending_code = request.session.get(INVITE_SESSION_KEY)
+    if pending_code:
+        pending = HouseholdInvitation.objects.filter(code=pending_code).first()
+        if pending and pending.is_usable:
+            return redirect('invite_accept', code=pending.code)
+        request.session.pop(INVITE_SESSION_KEY, None)
+
+    if request.method == 'POST' and request.POST.get('action') == 'join':
+        code = request.POST.get('code', '').strip()
+        # Accept either a bare code or a pasted full invite URL.
+        code = code.rstrip('/').rsplit('/', 1)[-1]
+        invite = HouseholdInvitation.objects.filter(code=code).first() if code else None
+        if invite is None:
+            messages.error(request, "That invite code is not valid.")
+        elif not invite.is_usable:
+            messages.error(request, invite.unusable_reason())
+        else:
+            return redirect('invite_accept', code=invite.code)
+        return redirect('household_setup')
+
     if request.method == 'POST':
         form = HouseholdForm(request.POST)
         if form.is_valid():
@@ -139,8 +225,8 @@ def household_setup(request):
             if partner_username:
                 try:
                     partner = User.objects.get(username=partner_username)
-                    household.members.add(partner)
-                    messages.success(request, f"Partner {partner.username} added.")
+                    level, msg = add_member_to_household(household, partner)
+                    getattr(messages, level)(request, msg)
                 except User.DoesNotExist:
                     messages.warning(request, f"User '{partner_username}' not found. Add them later.")
             seed_household_defaults(household)
@@ -161,8 +247,8 @@ def household_settings(request):
             username = request.POST.get('username', '').strip()
             try:
                 user = User.objects.get(username=username)
-                household.members.add(user)
-                messages.success(request, f"{user.username} added.")
+                level, msg = add_member_to_household(household, user)
+                getattr(messages, level)(request, msg)
             except User.DoesNotExist:
                 messages.error(request, f"User '{username}' not found.")
         elif action == 'remove_member':
@@ -173,6 +259,23 @@ def household_settings(request):
             else:
                 household.members.remove(user)
                 messages.success(request, f"{user.username} removed.")
+        elif action == 'create_invite':
+            invite = HouseholdInvitation.objects.create(
+                household=household,
+                code=HouseholdInvitation.generate_code(),
+                invited_by=request.user,
+                note=request.POST.get('note', '').strip()[:200],
+            )
+            messages.success(request, "Invite link created — send it to your partner.")
+            return redirect(f"{reverse('household_settings')}?new_invite={invite.code}")
+        elif action == 'revoke_invite':
+            invite = get_object_or_404(
+                HouseholdInvitation, pk=request.POST.get('invite_id'), household=household
+            )
+            if invite.status == HouseholdInvitation.STATUS_PENDING:
+                invite.status = HouseholdInvitation.STATUS_REVOKED
+                invite.save(update_fields=['status'])
+                messages.success(request, "Invite link cancelled.")
         elif action == 'change_currency':
             cid = request.POST.get('currency_id')
             try:
@@ -183,10 +286,63 @@ def household_settings(request):
                 pass
         return redirect('household_settings')
 
+    invites = household.invitations.select_related('invited_by', 'accepted_by')
     return render(request, 'budget_app/household_settings.html', {
         'household': household,
         'currencies': Currency.objects.all(),
+        'pending_invites': [i for i in invites if i.is_usable],
+        'past_invites': [i for i in invites if not i.is_usable][:10],
+        'new_invite_code': request.GET.get('new_invite', ''),
     })
+
+
+def invite_accept(request, code):
+    """Landing page for an invite link. Works logged-out, logged-in, and for
+    brand-new accounts coming back from signup."""
+    invite = HouseholdInvitation.objects.filter(code=code).select_related(
+        'household', 'invited_by'
+    ).first()
+
+    if invite is None:
+        return render(request, 'budget_app/invite_accept.html',
+                      {'error': 'That invite link is not valid.'}, status=404)
+
+    reason = invite.unusable_reason()
+    if reason:
+        # An already-accepted link is not an error for the person who used it.
+        if (request.user.is_authenticated
+                and invite.household.members.filter(pk=request.user.pk).exists()):
+            request.session.pop(INVITE_SESSION_KEY, None)
+            return redirect('dashboard')
+        return render(request, 'budget_app/invite_accept.html',
+                      {'invite': invite, 'error': reason}, status=410)
+
+    if not request.user.is_authenticated:
+        # Stash it so /household/setup/ can offer the join instead of a create,
+        # then show sign-up / sign-in options that carry the code through.
+        request.session[INVITE_SESSION_KEY] = invite.code
+        return render(request, 'budget_app/invite_accept.html', {'invite': invite})
+
+    if invite.household.members.filter(pk=request.user.pk).exists():
+        # Usually the sender checking their own link — don't burn it on them.
+        messages.info(request, f"You're already a member of {invite.household.name}. "
+                               f"This link is still active for your partner.")
+        return redirect('household_settings')
+
+    if request.method == 'POST':
+        level, msg = add_member_to_household(invite.household, request.user)
+        invite.accept(request.user)
+        request.session.pop(INVITE_SESSION_KEY, None)
+        getattr(messages, level)(request, msg)
+        Alert.objects.create(
+            household=invite.household, user=invite.invited_by,
+            title='Invite accepted',
+            message=f"{request.user.username} joined {invite.household.name}.",
+            level=Alert.LEVEL_INFO, link_url=reverse('household_settings'),
+        )
+        return redirect('dashboard')
+
+    return render(request, 'budget_app/invite_accept.html', {'invite': invite})
 
 
 # ============================================================

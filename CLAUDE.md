@@ -65,7 +65,9 @@ Important invariants:
 
 1. `AutoApplyRecurringMiddleware` (in `MIDDLEWARE`) runs on every authenticated request. Once per session-day it calls `apply_due_recurring(household)` and `check_budget_alerts(household)`. Errors are swallowed so background work never breaks the page.
 2. `household_context` processor injects `current_household`, `currency_symbol`, `currency_code`, `unread_alerts_count`, `pending_requests_count` into every template (drives the sidebar badges).
-3. Views use the `@login_required` + custom `ensure_household` decorator pattern; `get_user_household(user) = user.households.first()` (one household per user assumed).
+3. Views use the `@login_required` + custom `ensure_household` decorator pattern; `get_user_household(user)` delegates to `resolve_user_household()` in `models.py`.
+
+**Resolving "the user's household" — always use `resolve_user_household(user)` (`models.py`), never `user.households.first()`.** The app assumes one household per user, but signup funnels every new account through `/household/setup/`, so an invited partner usually owns a leftover solo household too. `.first()` orders by pk and can return that solo one, leaving the partner unable to see any shared data. The resolver prefers the household with the most members (tie-break on pk). Views, `context_processors`, `middleware`, and `consumers` all route through it — they must agree, or the WebSocket group won't match the rendered page. `add_member_to_household()` in `views.py` is the invite path: it deletes the invitee's empty signup stub, and keeps (with a warning) any household that holds real data.
 
 ## Service layer (`budget_app/services.py`)
 
@@ -89,6 +91,27 @@ Auth (`/login/`, `/logout/`) and `/admin/` live in `budget_project/urls.py`. Eve
 - **DB:** SQLite committed to repo (`db.sqlite3`). README says swap to Postgres for production.
 - **Time zone:** `Africa/Dar_es_Salaam`.
 
-## Production hardening to-do (per README)
+## Production
 
-`DEBUG = True`, hardcoded `SECRET_KEY`, and `ALLOWED_HOSTS = ['*']` are checked in for dev convenience. Before deploying: move secrets to env vars, set `DEBUG = False`, restrict `ALLOWED_HOSTS`, switch the database engine.
+Deployed at **https://budget.hotone.co.tz** (157.173.127.96), a shared box that also
+hosts four unrelated sites on ports 8001–8004 — don't touch their nginx configs or units.
+
+- Code `/opt/homebudget/src`, venv `/opt/homebudget/.venv`, secrets `/opt/homebudget/.env`.
+- **Production runs PostgreSQL 16**, not SQLite: database/role `homebudget` on `127.0.0.1:5432`,
+  configured via `DATABASE_URL`. Local dev still defaults to SQLite with no config.
+- `homebudget.service` runs daphne (ASGI, not WSGI — WebSockets) on `127.0.0.1:8005`; nginx terminates TLS.
+- Channel layer is Redis db 5 in production, in-memory locally.
+
+`settings.py` is env-driven (`DATABASE_URL`, `DJANGO_SECRET_KEY`, `DJANGO_DEBUG`,
+`DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS`, `DJANGO_SECURE_COOKIES`,
+`DJANGO_DB_PATH`, `DJANGO_CONN_MAX_AGE`, `REDIS_URL`) with dev defaults preserved,
+so `runserver` still works with no environment set. `DATABASE_URL` is parsed by a
+small local helper rather than pulling in dj-database-url.
+
+Nightly backups at 02:30 via `homebudget-backup.timer` → `deploy/backup-db.py`,
+into `/opt/homebudget/backups` with 30-day retention. The script follows the
+configured engine (pg_dump when `DATABASE_URL` is set, SQLite online-backup
+otherwise) and discards any snapshot that fails verification. **If you change the
+database engine, check this script still matches.** Restore steps are in the README.
+
+Still open: backups are on-box only, `SECURE_HSTS_SECONDS` deliberately unset.

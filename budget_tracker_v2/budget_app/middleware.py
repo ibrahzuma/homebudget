@@ -2,6 +2,7 @@
 from django.utils import timezone
 from datetime import timedelta
 
+from .models import resolve_user_household
 from .services import apply_due_recurring, check_budget_alerts, check_upcoming_meeting_alerts
 
 
@@ -18,7 +19,7 @@ class AutoApplyRecurringMiddleware:
             today_str = timezone.now().date().isoformat()
             last = request.session.get(self.SESSION_KEY)
             if last != today_str:
-                household = request.user.households.first()
+                household = resolve_user_household(request.user)
                 if household:
                     try:
                         apply_due_recurring(household=household)

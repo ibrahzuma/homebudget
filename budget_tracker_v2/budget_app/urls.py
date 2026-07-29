@@ -8,6 +8,7 @@ urlpatterns = [
     # Household
     path('household/setup/', views.household_setup, name='household_setup'),
     path('household/settings/', views.household_settings, name='household_settings'),
+    path('join/<str:code>/', views.invite_accept, name='invite_accept'),
 
     # Transactions
     path('transactions/', views.transaction_list, name='transaction_list'),

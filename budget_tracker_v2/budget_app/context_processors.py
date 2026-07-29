@@ -1,13 +1,13 @@
 """Make household, currency, and unread alerts available in all templates."""
 from django.db.models import Q
 
-from .models import Alert, MoneyRequest, ChatMessage, ChatReadState
+from .models import Alert, MoneyRequest, ChatMessage, ChatReadState, resolve_user_household
 
 
 def household_context(request):
     if not request.user.is_authenticated:
         return {}
-    household = request.user.households.first()
+    household = resolve_user_household(request.user)
     if not household:
         return {'current_household': None}
 

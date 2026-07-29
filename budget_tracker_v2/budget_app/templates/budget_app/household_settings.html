@@ -47,17 +47,93 @@
     </div>
 
     <div class="col-lg-5">
+        <div class="card p-4 mb-3">
+            <h5 class="mb-1">Invite Partner</h5>
+            <p class="text-muted small mb-3">
+                Create a link and send it to your partner. They can sign up through it and
+                land straight in this household — no account needed beforehand.
+            </p>
+
+            {% if new_invite_code %}
+            <div class="alert alert-success py-2 px-3 mb-3">
+                <div class="small fw-semibold mb-2"><i class="bi bi-link-45deg"></i> Your invite link</div>
+                <div class="input-group input-group-sm">
+                    <input type="text" class="form-control font-monospace" id="newInviteLink" readonly
+                           value="{{ request.scheme }}://{{ request.get_host }}{% url 'invite_accept' new_invite_code %}">
+                    <button class="btn btn-outline-success" type="button"
+                            onclick="var i=document.getElementById('newInviteLink');i.select();navigator.clipboard.writeText(i.value);this.innerHTML='<i class=&quot;bi bi-check2&quot;></i> Copied';">
+                        <i class="bi bi-clipboard"></i> Copy
+                    </button>
+                </div>
+            </div>
+            {% endif %}
+
+            <form method="post" class="mb-3">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="create_invite">
+                <div class="mb-2">
+                    <input type="text" name="note" class="form-control form-control-sm"
+                           placeholder="Optional note, e.g. &quot;for Asha&quot;" maxlength="200">
+                </div>
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="bi bi-link-45deg"></i> Create Invite Link
+                </button>
+            </form>
+
+            {% if pending_invites %}
+            <h6 class="small text-uppercase text-muted mt-4 mb-2">Active links</h6>
+            <ul class="list-group list-group-flush">
+                {% for inv in pending_invites %}
+                <li class="list-group-item px-0 py-2">
+                    <div class="d-flex justify-content-between align-items-start gap-2">
+                        <div class="small">
+                            <div class="font-monospace text-truncate" style="max-width: 15rem;">{{ inv.code }}</div>
+                            <div class="text-muted">
+                                {% if inv.note %}{{ inv.note }} &middot; {% endif %}
+                                expires {{ inv.expires_at|date:"j M Y" }}
+                            </div>
+                        </div>
+                        <form method="post" class="d-inline">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="revoke_invite">
+                            <input type="hidden" name="invite_id" value="{{ inv.id }}">
+                            <button class="btn btn-sm btn-outline-danger" title="Cancel this link">
+                                <i class="bi bi-x"></i>
+                            </button>
+                        </form>
+                    </div>
+                </li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+
+            {% if past_invites %}
+            <h6 class="small text-uppercase text-muted mt-4 mb-2">Used &amp; expired</h6>
+            <ul class="list-group list-group-flush small">
+                {% for inv in past_invites %}
+                <li class="list-group-item px-0 py-2 d-flex justify-content-between text-muted">
+                    <span>{% if inv.note %}{{ inv.note }}{% else %}Invite{% endif %}</span>
+                    <span>
+                        {% if inv.accepted_by %}joined: {{ inv.accepted_by.username }}
+                        {% else %}{{ inv.get_status_display|lower }}{% endif %}
+                    </span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+        </div>
+
         <div class="card p-4">
-            <h5 class="mb-3">Add Partner</h5>
+            <h5 class="mb-1">Add by Username</h5>
+            <p class="text-muted small mb-3">If your partner already has an account.</p>
             <form method="post">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="add_member">
                 <div class="mb-3">
                     <label class="form-label">Username</label>
                     <input type="text" name="username" class="form-control" required>
-                    <small class="text-muted">Partner must already have an account.</small>
                 </div>
-                <button type="submit" class="btn btn-primary w-100"><i class="bi bi-person-plus"></i> Add Member</button>
+                <button type="submit" class="btn btn-outline-primary w-100"><i class="bi bi-person-plus"></i> Add Member</button>
             </form>
         </div>
     </div>

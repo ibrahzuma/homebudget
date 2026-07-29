@@ -334,7 +334,14 @@
     <main class="auth-form">
         <div class="auth-card">
             <h2>Create your account</h2>
+            {% if invite %}
+            <p class="subtitle">
+                You've been invited to join <strong>{{ invite.household.name }}</strong> —
+                sign up and you'll go straight in.
+            </p>
+            {% else %}
             <p class="subtitle">Free, takes about a minute.</p>
+            {% endif %}
 
             {% if form.non_field_errors %}
             <div class="alert-error">
@@ -345,6 +352,7 @@
 
             <form method="post" novalidate>
                 {% csrf_token %}
+                {% if invite_code %}<input type="hidden" name="invite" value="{{ invite_code }}">{% endif %}
 
                 <div class="mb-3">
                     <label for="id_username">Username</label>

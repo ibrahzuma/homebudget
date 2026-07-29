@@ -1,3 +1,4 @@
+import secrets
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -61,6 +62,104 @@ class Household(models.Model):
     @property
     def currency_code(self):
         return self.base_currency.code if self.base_currency else 'USD'
+
+
+def resolve_user_household(user):
+    """The one household a user works in. Use this everywhere — never
+    ``user.households.first()``.
+
+    A user can end up in more than one household: the signup flow sends every
+    new account to /household/setup/, so an invited partner usually creates a
+    solo household of their own before being added to the shared one. A bare
+    ``.first()`` orders by pk and therefore hands them back that solo household,
+    where they see none of the shared data (money requests, transactions,
+    alerts). Prefer the household with the most members so both partners resolve
+    to the same one; tie-break on pk to stay stable across requests.
+    """
+    if user is None or not user.is_authenticated:
+        return None
+    # Filter by pk subquery rather than ``user.households``: annotating a Count
+    # over the same m2m that filtered the queryset reuses that join, so every
+    # row would come back with a count of 1.
+    return (
+        Household.objects
+        .filter(pk__in=user.households.values('pk'))
+        .annotate(_member_count=models.Count('members'))
+        .order_by('-_member_count', 'id')
+        .first()
+    )
+
+
+INVITATION_TTL_DAYS = 14
+
+
+def default_invitation_expiry():
+    return timezone.now() + timedelta(days=INVITATION_TTL_DAYS)
+
+
+class HouseholdInvitation(models.Model):
+    """A single-use link that lets someone join an existing household.
+
+    Without this, the only way into the app is /household/setup/, which forces
+    every new account to create its own household — the invited partner then
+    owns two and can end up looking at the wrong one. An invitation lets them
+    join directly and never create a household at all.
+    """
+
+    STATUS_PENDING = 'pending'
+    STATUS_ACCEPTED = 'accepted'
+    STATUS_REVOKED = 'revoked'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_ACCEPTED, 'Accepted'),
+        (STATUS_REVOKED, 'Revoked'),
+    ]
+
+    household = models.ForeignKey(Household, on_delete=models.CASCADE, related_name='invitations')
+    code = models.CharField(max_length=64, unique=True, db_index=True)
+    invited_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='invitations_sent')
+    note = models.CharField(max_length=200, blank=True,
+                            help_text='Optional reminder of who this link is for')
+    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(default=default_invitation_expiry)
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    accepted_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name='invitations_accepted')
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Invite to {self.household.name} ({self.status})"
+
+    @staticmethod
+    def generate_code():
+        return secrets.token_urlsafe(24)
+
+    @property
+    def is_expired(self):
+        return timezone.now() >= self.expires_at
+
+    @property
+    def is_usable(self):
+        return self.status == self.STATUS_PENDING and not self.is_expired
+
+    def unusable_reason(self):
+        """Human-readable reason this link can't be used, or None if it can."""
+        if self.status == self.STATUS_ACCEPTED:
+            return 'This invite link has already been used.'
+        if self.status == self.STATUS_REVOKED:
+            return 'This invite link was cancelled.'
+        if self.is_expired:
+            return 'This invite link has expired. Ask for a new one.'
+        return None
+
+    def accept(self, user):
+        self.status = self.STATUS_ACCEPTED
+        self.accepted_by = user
+        self.accepted_at = timezone.now()
+        self.save(update_fields=['status', 'accepted_by', 'accepted_at'])
 
 
 # ============================================================
