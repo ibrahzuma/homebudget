@@ -115,6 +115,17 @@ Settings read from the environment, falling back to dev-friendly defaults so
 Local development still uses SQLite with zero configuration — set `DATABASE_URL`
 only where you want Postgres.
 
+## Mobile API
+
+The Flutter app in `../mobile` talks to a token-authenticated JSON API under
+`/api/v1/` (Django REST Framework). Endpoint reference: `../docs/mobile-api.md`.
+It reuses the web forms for validation and `services.py` for every side effect,
+so data entered on the phone behaves exactly like data entered in the browser.
+
+```bash
+python manage.py test budget_app     # includes tests_api.py
+```
+
 ## Production deployment
 
 Live at **https://budget.hotone.co.tz** (157.173.127.96).

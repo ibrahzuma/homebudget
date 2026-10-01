@@ -1,13 +1,17 @@
 """Middleware to auto-apply due recurring transactions and check alerts."""
 from django.utils import timezone
-from datetime import timedelta
 
 from .models import resolve_user_household
-from .services import apply_due_recurring, check_budget_alerts, check_upcoming_meeting_alerts
+from .services import run_daily_household_tasks
 
 
 class AutoApplyRecurringMiddleware:
-    """Once per session-day, apply due recurring transactions for the user's household."""
+    """Once per session-day, apply due recurring transactions for the user's household.
+
+    Token-authenticated API requests have no session (and DRF authenticates
+    after middleware runs), so the API triggers the same work itself — see
+    ``budget_app.api.views.HouseholdAPIView``.
+    """
 
     SESSION_KEY = '_recurring_last_check'
 
@@ -22,9 +26,7 @@ class AutoApplyRecurringMiddleware:
                 household = resolve_user_household(request.user)
                 if household:
                     try:
-                        apply_due_recurring(household=household)
-                        check_budget_alerts(household)
-                        check_upcoming_meeting_alerts(household)
+                        run_daily_household_tasks(household)
                     except Exception:
                         pass  # never break the request because of background work
                 request.session[self.SESSION_KEY] = today_str

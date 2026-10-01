@@ -30,6 +30,8 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'django.contrib.humanize',
     'channels',
+    'rest_framework',
+    'rest_framework.authtoken',
     'budget_app',
 ]
 
@@ -146,6 +148,27 @@ if not DEBUG:
     # on a bare IP; turn these (and SECURE_SSL_REDIRECT) on once TLS is in front.
     SESSION_COOKIE_SECURE = os.environ.get('DJANGO_SECURE_COOKIES', '').lower() in ('1', 'true', 'yes')
     CSRF_COOKIE_SECURE = SESSION_COOKIE_SECURE
+
+# Mobile JSON API (/api/v1/). Token auth only — no session auth, so the API
+# never depends on cookies or CSRF.
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.TokenAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_RENDERER_CLASSES': ['rest_framework.renderers.JSONRenderer'],
+    'DEFAULT_PARSER_CLASSES': [
+        'rest_framework.parsers.JSONParser',
+        'rest_framework.parsers.MultiPartParser',
+    ],
+    'DEFAULT_THROTTLE_CLASSES': ['rest_framework.throttling.ScopedRateThrottle'],
+    # Brute-force guard on login/signup, per client IP
+    'DEFAULT_THROTTLE_RATES': {'auth': os.environ.get('API_AUTH_THROTTLE', '10/min')},
+    # nginx is the only proxy in front of daphne
+    'NUM_PROXIES': 1 if not DEBUG else None,
+}
 
 LOGIN_URL = 'login'
 LOGIN_REDIRECT_URL = 'dashboard'

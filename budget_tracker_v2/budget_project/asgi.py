@@ -10,12 +10,14 @@ from channels.routing import ProtocolTypeRouter, URLRouter
 from channels.auth import AuthMiddlewareStack
 
 import budget_app.routing
+from budget_app.ws_auth import TokenAuthMiddleware
 
 django_asgi_app = get_asgi_application()
 
 application = ProtocolTypeRouter({
     'http': django_asgi_app,
-    'websocket': AuthMiddlewareStack(
+    # Session cookie (browser) or `Authorization: Token` header (mobile app)
+    'websocket': AuthMiddlewareStack(TokenAuthMiddleware(
         URLRouter(budget_app.routing.websocket_urlpatterns)
-    ),
+    )),
 })

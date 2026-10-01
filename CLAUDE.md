@@ -7,6 +7,8 @@ A Django 4.2 personal-finance web app for **two-person households**, server-rend
 ```
 homebudget/
 ├── README.md                          ← skeleton placeholder
+├── docs/mobile-api.md                 ← REST API reference (/api/v1/) for the mobile app
+├── mobile/                            ← Flutter app (Android/iOS) — see mobile/README.md
 └── budget_tracker_v2/                 ← actual Django project root
     ├── manage.py
     ├── requirements.txt               ← only Django>=4.2,<5.0
@@ -20,7 +22,9 @@ homebudget/
         ├── models.py                  ← 13 models (~450 lines)
         ├── views.py                   ← all views, ~1178 lines
         ├── forms.py                   ← Bootstrap-styled ModelForms
-        ├── services.py                ← business logic (recurring, alerts, forecast, net worth)
+        ├── services.py                ← business logic + household actions shared by web & API
+        ├── api/                       ← DRF token-auth JSON API for the mobile app (/api/v1/)
+        ├── ws_auth.py                 ← WebSocket `Authorization: Token` auth (mobile)
         ├── middleware.py              ← AutoApplyRecurringMiddleware (per-session-day cron)
         ├── context_processors.py      ← household_context (household, currency, badge counts)
         ├── urls.py                    ← all app URLs
@@ -39,7 +43,7 @@ python manage.py migrate
 python manage.py runserver       # http://127.0.0.1:8000/
 ```
 
-Sign up at `/signup/`, then `/household/setup/` to create the household. `seed_household_defaults()` in `views.py` auto-creates 5 currencies (USD, TZS, EUR, GBP, KES) and 12 default categories on household creation.
+Sign up at `/signup/`, then `/household/setup/` to create the household. `seed_household_defaults()` in `services.py` auto-creates 5 currencies (USD, TZS, EUR, GBP, KES) and 12 default categories on household creation.
 
 ## Domain model (`budget_app/models.py`)
 
@@ -67,11 +71,18 @@ Important invariants:
 2. `household_context` processor injects `current_household`, `currency_symbol`, `currency_code`, `unread_alerts_count`, `pending_requests_count` into every template (drives the sidebar badges).
 3. Views use the `@login_required` + custom `ensure_household` decorator pattern; `get_user_household(user)` delegates to `resolve_user_household()` in `models.py`.
 
-**Resolving "the user's household" — always use `resolve_user_household(user)` (`models.py`), never `user.households.first()`.** The app assumes one household per user, but signup funnels every new account through `/household/setup/`, so an invited partner usually owns a leftover solo household too. `.first()` orders by pk and can return that solo one, leaving the partner unable to see any shared data. The resolver prefers the household with the most members (tie-break on pk). Views, `context_processors`, `middleware`, and `consumers` all route through it — they must agree, or the WebSocket group won't match the rendered page. `add_member_to_household()` in `views.py` is the invite path: it deletes the invitee's empty signup stub, and keeps (with a warning) any household that holds real data.
+**Resolving "the user's household" — always use `resolve_user_household(user)` (`models.py`), never `user.households.first()`.** The app assumes one household per user, but signup funnels every new account through `/household/setup/`, so an invited partner usually owns a leftover solo household too. `.first()` orders by pk and can return that solo one, leaving the partner unable to see any shared data. The resolver prefers the household with the most members (tie-break on pk). Views, `context_processors`, `middleware`, and `consumers` all route through it — they must agree, or the WebSocket group won't match the rendered page. `add_member_to_household()` in `services.py` is the invite path: it deletes the invitee's empty signup stub, and keeps (with a warning) any household that holds real data.
 
 ## Service layer (`budget_app/services.py`)
 
-Business logic isolated from views — call from views or middleware:
+Business logic isolated from views — call from views, middleware or the API.
+**Every user action with side effects** (approve/reject a money request, debt
+payments, lent repayments, goal contributions, new loans-out, meeting
+snapshots/carry-over, chat send, exchange-rate recompute, CSV import) lives here
+as a function used by *both* the web views and `budget_app/api/`. Change
+behaviour there, not in a view, or web and mobile will drift apart. Page
+summaries (`dashboard_summary`, `calendar_month`, `monthly_report_data`) are
+shared the same way.
 
 - `apply_due_recurring(household, today)` — catches up to 24 occurrences per recurring entry to handle long gaps. Calls `apply_category_rules` on each created transaction.
 - `apply_category_rules(transaction)` — only fires when category is null and rule type matches transaction type.
@@ -84,9 +95,22 @@ Business logic isolated from views — call from views or middleware:
 
 Auth (`/login/`, `/logout/`) and `/admin/` live in `budget_project/urls.py`. Everything else is in `budget_app/urls.py`: dashboard `/`, `/signup/`, `/household/{setup,settings}/`, CRUD for `/transactions/`, `/categories/`, `/budgets/`, `/recurring/` (+ `/recurring/run-now/`), `/rules/` (+ `/rules/apply/`), `/alerts/`, `/requests/`, `/networth/` (+ `/assets/`, `/liabilities/`, `/networth/snapshot/`), `/currencies/` (+ `/currencies/rates/new/`), `/import/csv/` & `/export/csv/`, `/forecast/`, `/calendar/`.
 
+## Mobile API (`budget_app/api/`)
+
+`/api/v1/` — Django REST Framework, **token auth only** (no session/CSRF).
+Reference: `docs/mobile-api.md`. Design rules:
+
+- Input is validated by the **same Django forms** as the web UI (`api/base.py:bind_form`);
+  PATCH merges onto the instance so omitted fields keep their values.
+- Output is shaped by plain functions in `api/serializers.py`; money is always a decimal string.
+- Every view subclasses `HouseholdAPIView` (resolves `self.household`, 409 if none,
+  runs the once-a-day recurring/alert catch-up that the session middleware can't do for token clients).
+- Tests: `budget_app/tests_api.py` (API, WebSocket token auth, and web-view regression tests).
+- The WebSocket accepts either the session cookie or an `Authorization: Token` header (`ws_auth.py`).
+
 ## Stack
 
-- **Backend:** Django 4.2 (server-rendered), only dependency.
+- **Backend:** Django 4.2 (server-rendered) + Channels; DRF for the mobile API.
 - **Frontend:** Bootstrap 5.3 + Bootstrap Icons + Chart.js 4, all via CDN. No build step. Forms styled via `BootstrapMixin` in `forms.py`.
 - **DB:** SQLite committed to repo (`db.sqlite3`). README says swap to Postgres for production.
 - **Time zone:** `Africa/Dar_es_Salaam`.

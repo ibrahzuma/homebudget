@@ -1,14 +1,10 @@
-import csv
-import io
-from calendar import monthrange
-from datetime import date, datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from datetime import date
+from decimal import Decimal
 
 from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
-from django.db import transaction as db_transaction
 from django.db.models import Sum, Q
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
@@ -28,15 +24,26 @@ from .forms import (
 from .models import (
     Household, Transaction, Category, Budget, RecurringTransaction,
     CategoryRule, Alert, MoneyRequest, Asset, Liability, LiabilityPayment,
-    NetWorthSnapshot, Currency, ExchangeRate,
+    Currency, ExchangeRate,
     Meeting, AgreementItem, Goal, GoalContribution, Project,
-    Receivable, ReceivablePayment, ChatMessage, ChatReadState,
+    Receivable, ReceivablePayment,
     HouseholdInvitation, resolve_user_household,
 )
 from .services import (
-    apply_category_rules, apply_due_recurring, upcoming_recurring,
+    apply_category_rules, apply_due_recurring,
     check_budget_alerts, forecast_end_of_month, compute_net_worth,
-    bills_in_month, month_range, push_to_household,
+    month_range,
+    # Shared with the JSON API (budget_app/api/)
+    seed_household_defaults, ensure_default_currencies, add_member_to_household,
+    accept_invitation, notify_money_request_created, approve_money_request,
+    reject_money_request, cancel_money_request, record_liability_payment,
+    delete_liability_payment, record_goal_contribution, delete_goal_contribution,
+    create_receivable, record_receivable_payment, delete_receivable_payment,
+    save_networth_snapshot, save_exchange_rate, snapshot_meeting_state,
+    carry_over_open_items, suggest_next_meeting_date, normalize_agreement_completion,
+    quick_update_agreement, mark_chat_read, send_chat_message,
+    write_transactions_csv, import_transactions_csv,
+    dashboard_summary, calendar_month, monthly_report_data,
 )
 
 
@@ -57,89 +64,6 @@ def ensure_household(view):
         return view(request, *args, **kwargs)
     wrapper.__name__ = view.__name__
     return wrapper
-
-
-def add_member_to_household(household, user):
-    """Add ``user`` to ``household``, cleaning up the stub household they were
-    forced to create at signup.
-
-    Returns a ``(level, message)`` pair for ``messages.<level>``.
-
-    Every new account is pushed through /household/setup/, so an invited partner
-    almost always owns a throwaway solo household by the time they are added
-    here. Left in place it competes with the shared household when resolving
-    which one they see. If that leftover holds nothing the user authored it is
-    just signup residue and is deleted; if it holds real data we keep it (and
-    say so) rather than cascade-deleting the user's records.
-    """
-    if household.members.filter(pk=user.pk).exists():
-        return 'info', f"{user.username} is already a member of this household."
-
-    household.members.add(user)
-
-    # Everything a user can author. Seeded categories/currencies don't count —
-    # those exist in every brand-new household.
-    user_data = ('transactions', 'budgets', 'recurring_transactions', 'assets',
-                 'liabilities', 'goals', 'projects', 'meetings', 'receivables',
-                 'chat_messages', 'money_requests')
-
-    kept = []
-    for other in user.households.exclude(pk=household.pk):
-        is_empty_stub = (
-            other.members.count() == 1
-            and not any(getattr(other, rel).exists() for rel in user_data)
-        )
-        if is_empty_stub:
-            other.delete()
-        else:
-            kept.append(other.name)
-
-    if kept:
-        return 'warning', (
-            f"{user.username} added, but they still belong to: {', '.join(kept)}. "
-            f"Those households hold data, so they were left alone — "
-            f"{user.username} will now see '{household.name}'."
-        )
-    return 'success', f"{user.username} added to {household.name}."
-
-
-def seed_household_defaults(household):
-    """Seed default currencies, categories, and rules."""
-    # Currencies
-    defaults_cur = [
-        ('USD', 'US Dollar', '$'),
-        ('TZS', 'Tanzanian Shilling', 'TSh'),
-        ('EUR', 'Euro', '€'),
-        ('GBP', 'British Pound', '£'),
-        ('KES', 'Kenyan Shilling', 'KSh'),
-    ]
-    for code, name, sym in defaults_cur:
-        Currency.objects.get_or_create(code=code, defaults={'name': name, 'symbol': sym})
-
-    if not household.base_currency:
-        household.base_currency = Currency.objects.get(code='USD')
-        household.save(update_fields=['base_currency'])
-
-    # Categories
-    cats = [
-        ('Salary', Category.INCOME, '#198754', 'bi-cash-coin'),
-        ('Freelance', Category.INCOME, '#20c997', 'bi-laptop'),
-        ('Other Income', Category.INCOME, '#0dcaf0', 'bi-plus-circle'),
-        ('Groceries', Category.EXPENSE, '#0d6efd', 'bi-cart3'),
-        ('Rent / Mortgage', Category.EXPENSE, '#6f42c1', 'bi-house-door'),
-        ('Utilities', Category.EXPENSE, '#fd7e14', 'bi-lightning'),
-        ('Fuel', Category.EXPENSE, '#dc3545', 'bi-fuel-pump'),
-        ('Transport', Category.EXPENSE, '#e83e8c', 'bi-bus-front'),
-        ('Dining Out', Category.EXPENSE, '#d63384', 'bi-cup-hot'),
-        ('Entertainment', Category.EXPENSE, '#ffc107', 'bi-film'),
-        ('Subscriptions', Category.EXPENSE, '#6610f2', 'bi-broadcast'),
-        ('Healthcare', Category.EXPENSE, '#198754', 'bi-heart-pulse'),
-    ]
-    for name, ctype, color, icon in cats:
-        Category.objects.get_or_create(
-            household=household, name=name, category_type=ctype,
-            defaults={'color': color, 'icon': icon}
-        )
 
 
 # ============================================================
@@ -185,11 +109,7 @@ def signup_view(request):
 @login_required
 def household_setup(request):
     # Make sure default currencies exist before showing the form
-    Currency.objects.get_or_create(code='USD', defaults={'name': 'US Dollar', 'symbol': '$'})
-    Currency.objects.get_or_create(code='TZS', defaults={'name': 'Tanzanian Shilling', 'symbol': 'TSh'})
-    Currency.objects.get_or_create(code='EUR', defaults={'name': 'Euro', 'symbol': '€'})
-    Currency.objects.get_or_create(code='GBP', defaults={'name': 'British Pound', 'symbol': '£'})
-    Currency.objects.get_or_create(code='KES', defaults={'name': 'Kenyan Shilling', 'symbol': 'KSh'})
+    ensure_default_currencies()
 
     if get_user_household(request.user):
         return redirect('dashboard')
@@ -330,16 +250,9 @@ def invite_accept(request, code):
         return redirect('household_settings')
 
     if request.method == 'POST':
-        level, msg = add_member_to_household(invite.household, request.user)
-        invite.accept(request.user)
+        level, msg = accept_invitation(invite, request.user)
         request.session.pop(INVITE_SESSION_KEY, None)
         getattr(messages, level)(request, msg)
-        Alert.objects.create(
-            household=invite.household, user=invite.invited_by,
-            title='Invite accepted',
-            message=f"{request.user.username} joined {invite.household.name}.",
-            level=Alert.LEVEL_INFO, link_url=reverse('household_settings'),
-        )
         return redirect('dashboard')
 
     return render(request, 'budget_app/invite_accept.html', {'invite': invite})
@@ -353,95 +266,8 @@ def invite_accept(request, code):
 @ensure_household
 def dashboard(request):
     household = get_user_household(request.user)
-    today = timezone.now().date()
-    month_start, month_end = month_range(today)
-
-    qs = Transaction.objects.filter(
-        household=household, date__gte=month_start, date__lte=month_end
-    )
-
-    total_income = qs.filter(transaction_type=Transaction.INCOME).aggregate(
-        s=Sum('amount_base'))['s'] or Decimal('0')
-    total_expense = qs.filter(transaction_type=Transaction.EXPENSE).aggregate(
-        s=Sum('amount_base'))['s'] or Decimal('0')
-    balance = total_income - total_expense
-
-    members_data = []
-    for member in household.members.all():
-        m_inc = qs.filter(user=member, transaction_type=Transaction.INCOME).aggregate(
-            s=Sum('amount_base'))['s'] or Decimal('0')
-        m_exp = qs.filter(user=member, transaction_type=Transaction.EXPENSE).aggregate(
-            s=Sum('amount_base'))['s'] or Decimal('0')
-        exp_share = float(m_exp / total_expense * 100) if total_expense else 0
-        inc_share = float(m_inc / total_income * 100) if total_income else 0
-        members_data.append({
-            'user': member, 'income': m_inc, 'expense': m_exp,
-            'net': m_inc - m_exp,
-            'expense_share_pct': round(exp_share, 1),
-            'income_share_pct': round(inc_share, 1),
-        })
-
-    budgets = Budget.objects.filter(household=household, month=month_start)
-    budget_progress = []
-    for b in budgets:
-        spent = qs.filter(
-            transaction_type=Transaction.EXPENSE, category=b.category
-        ).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
-        pct = float(spent / b.monthly_limit * 100) if b.monthly_limit else 0
-        budget_progress.append({
-            'category': b.category, 'limit': b.monthly_limit, 'spent': spent,
-            'pct': min(round(pct, 1), 100), 'over': spent > b.monthly_limit,
-        })
-
-    # Active goals (top 4 by progress remaining)
-    active_goals = household.goals.filter(status=Goal.STATUS_ACTIVE).order_by('-target_amount')[:4]
-
-    recent = qs.select_related('user', 'category')[:6]
-    upcoming = upcoming_recurring(household, days=7)
-    forecast = forecast_end_of_month(household)
-    networth = compute_net_worth(household)
-
-    # Credit (owed to us) and debit (we owe)
-    total_lent_out = sum(
-        (Decimal(r.balance) for r in household.receivables.filter(status=Receivable.STATUS_ACTIVE)),
-        Decimal('0')
-    )
-    total_owed = sum(
-        (Decimal(l.balance) for l in household.liabilities.all()),
-        Decimal('0')
-    )
-    overdue_lent = household.receivables.filter(
-        status=Receivable.STATUS_ACTIVE, due_date__lt=today
-    ).count()
-
-    pending_my_approvals = MoneyRequest.objects.filter(
-        household=household, approver=request.user, status=MoneyRequest.STATUS_PENDING
-    )
-
-    # Next upcoming meeting
-    next_meeting = household.meetings.filter(
-        status=Meeting.STATUS_PLANNED, meeting_date__gte=today
-    ).order_by('meeting_date').first()
-
-    context = {
-        'household': household,
-        'month_label': month_start.strftime('%B %Y'),
-        'total_income': total_income,
-        'total_expense': total_expense,
-        'balance': balance,
-        'members_data': members_data,
-        'budget_progress': budget_progress,
-        'recent': recent,
-        'upcoming': upcoming,
-        'forecast': forecast,
-        'networth': networth,
-        'pending_my_approvals': pending_my_approvals,
-        'active_goals': active_goals,
-        'next_meeting': next_meeting,
-        'total_lent_out': total_lent_out,
-        'total_owed': total_owed,
-        'overdue_lent': overdue_lent,
-    }
+    context = dashboard_summary(household, request.user)
+    context['household'] = household
     return render(request, 'budget_app/dashboard.html', context)
 
 
@@ -733,70 +559,21 @@ def bill_calendar(request):
     try:
         year = int(request.GET.get('year', today.year))
         month = int(request.GET.get('month', today.month))
+        date(year, month, 1)
     except ValueError:
         year, month = today.year, today.month
 
-    target = date(year, month, 1)
-    days_with_bills = bills_in_month(household, target)
-
-    # Build calendar grid (Mon-Sun)
-    first_day = target
-    _, last_day_num = monthrange(year, month)
-    last_day = date(year, month, last_day_num)
-    # Find Monday of week containing first day
-    grid_start = first_day - timedelta(days=first_day.weekday())
-    # Find Sunday of week containing last day
-    grid_end = last_day + timedelta(days=6 - last_day.weekday())
-
-    weeks = []
-    d = grid_start
-    week = []
-    while d <= grid_end:
-        bills = days_with_bills.get(d, [])
-        income = sum((b['amount'] for b in bills if b.get('kind') == 'income'), Decimal('0'))
-        expense = sum((b['amount'] for b in bills if b.get('kind') != 'income'), Decimal('0'))
-        net = income - expense
-        week.append({
-            'date': d,
-            'in_month': d.month == month,
-            'is_today': d == today,
-            'bills': bills,
-            'total': expense,           # back-compat: expense total of the day
-            'income': income,
-            'expense': expense,
-            'net': net,
-        })
-        if len(week) == 7:
-            weeks.append(week)
-            week = []
-        d += timedelta(days=1)
-
-    # Prev / next month
-    prev_month = (target - timedelta(days=1)).replace(day=1)
-    if month == 12:
-        next_month = date(year + 1, 1, 1)
-    else:
-        next_month = date(year, month + 1, 1)
-
-    month_expense = sum(
-        (b['amount'] for items in days_with_bills.values() for b in items
-         if b.get('kind') != 'income'), Decimal('0')
-    )
-    month_income = sum(
-        (b['amount'] for items in days_with_bills.values() for b in items
-         if b.get('kind') == 'income'), Decimal('0')
-    )
-
+    cal = calendar_month(household, year, month, today)
     return render(request, 'budget_app/bill_calendar.html', {
         'year': year, 'month': month,
-        'month_label': target.strftime('%B %Y'),
-        'weeks': weeks,
-        'prev_month': prev_month,
-        'next_month': next_month,
-        'month_total': month_expense,   # back-compat
-        'month_expense': month_expense,
-        'month_income': month_income,
-        'month_net': month_income - month_expense,
+        'month_label': cal['target'].strftime('%B %Y'),
+        'weeks': cal['weeks'],
+        'prev_month': cal['prev_month'],
+        'next_month': cal['next_month'],
+        'month_total': cal['month_expense'],   # back-compat
+        'month_expense': cal['month_expense'],
+        'month_income': cal['month_income'],
+        'month_net': cal['month_net'],
         'today': today,
     })
 
@@ -924,23 +701,7 @@ def request_create(request):
             r.household = household
             r.requester = request.user
             r.save()
-            # Notify approver via Alert
-            Alert.objects.create(
-                household=household, user=r.approver,
-                title=f"Money request from {request.user.username}",
-                message=f"{request.user.username} requested "
-                        f"{r.currency.symbol if r.currency else household.currency_symbol}"
-                        f"{r.amount} for: {r.purpose}",
-                level=Alert.LEVEL_INFO,
-                link_url=f"/requests/{r.pk}/",
-            )
-            push_to_household(household, {
-                'kind': 'request.created',
-                'message': f"New money request from {request.user.username} for {r.purpose}",
-                'link': f'/requests/{r.pk}/',
-                'level': 'info',
-                'for_user_id': r.approver_id,
-            })
+            notify_money_request_created(r)
             messages.success(request, "Request sent.")
             return redirect('request_list')
     else:
@@ -973,72 +734,17 @@ def request_detail(request, pk):
             note = form.cleaned_data.get('response_note', '')
 
         if action == 'approve' and can_respond:
-            with db_transaction.atomic():
-                # An approved money request is purely an internal transfer of
-                # household funds — it represents money the household is
-                # actually spending, not income. Record a single expense
-                # attributed to the requester (the spender), in the requested
-                # category, so the household total reflects the outflow once.
-                cur = money_request.currency or household.base_currency
-                expense_t = Transaction.objects.create(
-                    household=household, user=money_request.requester,
-                    category=money_request.category,
-                    transaction_type=Transaction.EXPENSE,
-                    amount=money_request.amount, currency=cur,
-                    description=f"Approved by {money_request.approver.username}: {money_request.purpose}",
-                    payee=money_request.purpose,
-                    date=timezone.now().date(),
-                    source=Transaction.SOURCE_REQUEST,
-                )
-                money_request.status = MoneyRequest.STATUS_APPROVED
-                money_request.response_note = note
-                money_request.resolved_at = timezone.now()
-                money_request.income_transaction = None
-                money_request.expense_transaction = expense_t
-                money_request.save()
-                Alert.objects.create(
-                    household=household, user=money_request.requester,
-                    title=f"Request approved by {request.user.username}",
-                    message=f"Your request for {money_request.purpose} was approved.",
-                    level=Alert.LEVEL_INFO,
-                )
-                check_budget_alerts(household)
-            push_to_household(household, {
-                'kind': 'request.approved',
-                'message': f"{request.user.username} approved your request: {money_request.purpose}",
-                'link': f'/requests/{money_request.pk}/',
-                'level': 'success',
-                'for_user_id': money_request.requester_id,
-            })
+            approve_money_request(money_request, note)
             messages.success(request, "Request approved and transactions recorded.")
             return redirect('request_detail', pk=pk)
 
         elif action == 'reject' and can_respond:
-            money_request.status = MoneyRequest.STATUS_REJECTED
-            money_request.response_note = note
-            money_request.resolved_at = timezone.now()
-            money_request.save()
-            Alert.objects.create(
-                household=household, user=money_request.requester,
-                title=f"Request rejected by {request.user.username}",
-                message=f"Your request for {money_request.purpose} was rejected."
-                        + (f" Note: {note}" if note else ""),
-                level=Alert.LEVEL_WARNING,
-            )
-            push_to_household(household, {
-                'kind': 'request.rejected',
-                'message': f"{request.user.username} rejected your request: {money_request.purpose}",
-                'link': f'/requests/{money_request.pk}/',
-                'level': 'warning',
-                'for_user_id': money_request.requester_id,
-            })
+            reject_money_request(money_request, note)
             messages.info(request, "Request rejected.")
             return redirect('request_detail', pk=pk)
 
         elif action == 'cancel' and can_cancel:
-            money_request.status = MoneyRequest.STATUS_CANCELLED
-            money_request.resolved_at = timezone.now()
-            money_request.save()
+            cancel_money_request(money_request)
             messages.info(request, "Request cancelled.")
             return redirect('request_detail', pk=pk)
 
@@ -1224,34 +930,11 @@ def payment_create(request, pk):
     if request.method == 'POST':
         form = LiabilityPaymentForm(request.POST, household=household, liability=liab)
         if form.is_valid():
-            with db_transaction.atomic():
-                payment = form.save(commit=False)
-                payment.liability = liab
-                if not payment.currency:
-                    payment.currency = liab.currency or household.base_currency
-                # Optionally record an expense transaction
-                if form.cleaned_data.get('record_as_expense'):
-                    cat = form.cleaned_data.get('expense_category')
-                    if not cat:
-                        cat, _ = Category.objects.get_or_create(
-                            household=household, name='Debt Payment',
-                            category_type=Category.EXPENSE,
-                            defaults={'color': '#dc3545', 'icon': 'bi-cash-stack'},
-                        )
-                    tx = Transaction.objects.create(
-                        household=household, user=request.user,
-                        category=cat, transaction_type=Transaction.EXPENSE,
-                        amount=payment.amount, currency=payment.currency,
-                        description=f"Payment toward {liab.name}",
-                        payee=liab.lender or liab.name,
-                        date=payment.date,
-                        source=Transaction.SOURCE_MANUAL,
-                    )
-                    payment.transaction = tx
-                payment.save()
-                # Decrement the outstanding balance (clamp at 0)
-                new_balance = max(Decimal('0'), Decimal(liab.balance) - Decimal(payment.amount))
-                Liability.objects.filter(pk=liab.pk).update(balance=new_balance)
+            payment = record_liability_payment(
+                liab, form.save(commit=False), request.user,
+                record_as_expense=form.cleaned_data.get('record_as_expense'),
+                expense_category=form.cleaned_data.get('expense_category'),
+            )
             messages.success(request, f"Payment of {payment.amount} recorded.")
             return redirect('debt_detail', pk=liab.pk)
     else:
@@ -1270,14 +953,7 @@ def payment_delete(request, pk, payment_pk):
     liab = get_object_or_404(Liability, pk=pk, household=household)
     payment = get_object_or_404(LiabilityPayment, pk=payment_pk, liability=liab)
     if request.method == 'POST':
-        with db_transaction.atomic():
-            # Restore the liability balance and delete the linked expense, if any
-            Liability.objects.filter(pk=liab.pk).update(
-                balance=Decimal(liab.balance) + Decimal(payment.amount)
-            )
-            if payment.transaction_id:
-                payment.transaction.delete()
-            payment.delete()
+        delete_liability_payment(liab, payment)
         messages.info(request, "Payment removed and balance restored.")
         return redirect('debt_detail', pk=liab.pk)
     return render(request, 'budget_app/payment_confirm_delete.html', {
@@ -1291,15 +967,7 @@ def networth_snapshot(request):
     """Save a point-in-time snapshot."""
     household = get_user_household(request.user)
     if request.method == 'POST':
-        data = compute_net_worth(household)
-        NetWorthSnapshot.objects.update_or_create(
-            household=household, snapshot_date=timezone.now().date(),
-            defaults={
-                'total_assets': data['total_assets'],
-                'total_liabilities': data['total_liabilities'],
-                'net_worth': data['net_worth'],
-            }
-        )
+        save_networth_snapshot(household)
         messages.success(request, "Snapshot saved.")
     return redirect('networth')
 
@@ -1339,16 +1007,12 @@ def rate_create(request):
     if request.method == 'POST':
         form = ExchangeRateForm(request.POST)
         if form.is_valid():
-            ExchangeRate.objects.update_or_create(
-                from_currency=form.cleaned_data['from_currency'],
-                to_currency=form.cleaned_data['to_currency'],
-                defaults={'rate': form.cleaned_data['rate']},
+            save_exchange_rate(
+                get_user_household(request.user),
+                form.cleaned_data['from_currency'],
+                form.cleaned_data['to_currency'],
+                form.cleaned_data['rate'],
             )
-            # Recompute base amounts on transactions in this currency
-            household = get_user_household(request.user)
-            for t in household.transactions.filter(currency=form.cleaned_data['from_currency']):
-                t.amount_base = t._compute_amount_base()
-                t.save(update_fields=['amount_base'])
             messages.success(request, "Exchange rate saved.")
             return redirect('currency_list')
     else:
@@ -1370,22 +1034,9 @@ def export_csv(request):
     today = timezone.now().date().isoformat()
     response['Content-Disposition'] = f'attachment; filename="transactions_{today}.csv"'
 
-    writer = csv.writer(response)
-    writer.writerow(['date', 'type', 'amount', 'currency', 'amount_base',
-                     'category', 'payee', 'description', 'member', 'source'])
-    for t in household.transactions.select_related('user', 'category', 'currency').all():
-        writer.writerow([
-            t.date.isoformat(),
-            t.transaction_type,
-            t.amount,
-            t.currency.code if t.currency else '',
-            t.amount_base or '',
-            t.category.name if t.category else '',
-            t.payee,
-            t.description,
-            t.user.username,
-            t.source,
-        ])
+    write_transactions_csv(
+        response, household.transactions.select_related('user', 'category', 'currency').all()
+    )
     return response
 
 
@@ -1397,68 +1048,9 @@ def import_csv(request):
     if request.method == 'POST':
         form = CSVImportForm(request.POST, request.FILES)
         if form.is_valid():
-            f = form.cleaned_data['file']
-            try:
-                decoded = f.read().decode('utf-8-sig')
-            except UnicodeDecodeError:
-                decoded = f.read().decode('latin-1')
-            reader = csv.DictReader(io.StringIO(decoded))
-
-            created = 0
-            errors = []
-            base_cur = household.base_currency
-            for i, row in enumerate(reader, start=2):
-                try:
-                    raw_date = (row.get('date') or '').strip()
-                    if not raw_date:
-                        errors.append(f"Row {i}: missing date")
-                        continue
-                    try:
-                        d = datetime.strptime(raw_date, '%Y-%m-%d').date()
-                    except ValueError:
-                        d = datetime.strptime(raw_date, '%m/%d/%Y').date()
-
-                    ttype = (row.get('type') or '').strip().lower()
-                    if ttype not in ('income', 'expense'):
-                        errors.append(f"Row {i}: type must be income or expense")
-                        continue
-
-                    amount = Decimal(str(row.get('amount') or '0').replace(',', ''))
-
-                    cat_name = (row.get('category') or '').strip()
-                    cat = None
-                    if cat_name:
-                        cat, _ = Category.objects.get_or_create(
-                            household=household, name=cat_name,
-                            category_type=ttype,
-                            defaults={'color': '#6c757d', 'icon': 'bi-tag'},
-                        )
-
-                    cur_code = (row.get('currency') or '').strip().upper()
-                    cur = None
-                    if cur_code:
-                        cur = Currency.objects.filter(code=cur_code).first()
-                    if not cur:
-                        cur = base_cur
-
-                    t = Transaction.objects.create(
-                        household=household,
-                        user=request.user,
-                        category=cat,
-                        transaction_type=ttype,
-                        amount=amount,
-                        currency=cur,
-                        payee=(row.get('payee') or '').strip(),
-                        description=(row.get('description') or '').strip(),
-                        date=d,
-                        source=Transaction.SOURCE_IMPORT,
-                    )
-                    apply_category_rules(t)
-                    created += 1
-                except (ValueError, InvalidOperation) as e:
-                    errors.append(f"Row {i}: {e}")
-            check_budget_alerts(household)
-            result = {'created': created, 'errors': errors}
+            result = import_transactions_csv(
+                household, request.user, form.cleaned_data['file'].read()
+            )
     else:
         form = CSVImportForm()
 
@@ -1488,21 +1080,6 @@ def forecast_view(request):
 # MEETINGS & AGREEMENTS
 # ============================================================
 
-def _suggest_next_meeting_date(household):
-    """Default next meeting date: 3 months after the last one, else today."""
-    last = household.meetings.order_by('-meeting_date').first()
-    today = timezone.now().date()
-    if not last:
-        return today
-    # add 3 months
-    m = last.meeting_date.month - 1 + 3
-    year = last.meeting_date.year + m // 12
-    month = m % 12 + 1
-    from calendar import monthrange as _mr
-    day = min(last.meeting_date.day, _mr(year, month)[1])
-    return date(year, month, day)
-
-
 @login_required
 @ensure_household
 def meeting_list(request):
@@ -1520,7 +1097,7 @@ def meeting_list(request):
         'meetings': meetings,
         'open_count': all_open.count(),
         'overdue_count': overdue.count(),
-        'next_suggested': _suggest_next_meeting_date(household),
+        'next_suggested': suggest_next_meeting_date(household),
         'today': today,
     })
 
@@ -1535,51 +1112,23 @@ def meeting_create(request):
             m = form.save(commit=False)
             m.household = household
             # Snapshot household state for context
-            today = timezone.now().date()
-            month_start, _ = month_range(today)
-            inc = Transaction.objects.filter(
-                household=household, transaction_type=Transaction.INCOME,
-                date__gte=month_start, date__lte=today
-            ).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
-            exp = Transaction.objects.filter(
-                household=household, transaction_type=Transaction.EXPENSE,
-                date__gte=month_start, date__lte=today
-            ).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
-            nw = compute_net_worth(household)
-            m.income_snapshot = inc
-            m.expense_snapshot = exp
-            m.net_worth_snapshot = nw['net_worth']
+            snapshot_meeting_state(m)
             m.save()
             form.save_m2m()
             # Carry over open agreement items from the previous meeting, if asked
             carried = 0
             if form.cleaned_data.get('carry_over_open_items') and form._previous_meeting:
-                open_items = form._previous_meeting.agreements.exclude(
-                    status__in=[AgreementItem.STATUS_DONE, AgreementItem.STATUS_CANCELLED]
-                )
-                for src in open_items:
-                    AgreementItem.objects.create(
-                        meeting=m,
-                        title=src.title,
-                        description=src.description,
-                        owner=src.owner,
-                        target_date=src.target_date,
-                        status=src.status,
-                        progress=src.progress,
-                        priority=src.priority,
-                        notes=src.notes,
-                    )
-                    carried += 1
+                carried = carry_over_open_items(form._previous_meeting, m)
             if carried:
                 messages.success(request, f"Meeting created. Carried over {carried} open item(s) from the previous meeting.")
             else:
                 messages.success(request, "Meeting created.")
             return redirect('meeting_detail', pk=m.pk)
     else:
+        suggested = suggest_next_meeting_date(household)
         form = MeetingForm(household=household, initial={
-            'meeting_date': _suggest_next_meeting_date(household),
-            'title': f"Q{((_suggest_next_meeting_date(household).month - 1) // 3) + 1} "
-                     f"{_suggest_next_meeting_date(household).year} Review",
+            'meeting_date': suggested,
+            'title': f"Q{((suggested.month - 1) // 3) + 1} {suggested.year} Review",
         })
     return render(request, 'budget_app/meeting_form.html', {
         'form': form, 'title': 'Schedule a Meeting',
@@ -1640,9 +1189,7 @@ def agreement_create(request, pk):
         if form.is_valid():
             item = form.save(commit=False)
             item.meeting = meeting
-            if item.status == AgreementItem.STATUS_DONE and not item.completed_date:
-                item.completed_date = timezone.now().date()
-                item.progress = 100
+            normalize_agreement_completion(item)
             item.save()
             messages.success(request, "Agreement item added.")
             return redirect('meeting_detail', pk=meeting.pk)
@@ -1663,11 +1210,7 @@ def agreement_edit(request, pk, item_pk):
         form = AgreementItemForm(request.POST, instance=item, household=household)
         if form.is_valid():
             saved = form.save(commit=False)
-            if saved.status == AgreementItem.STATUS_DONE and not saved.completed_date:
-                saved.completed_date = timezone.now().date()
-                saved.progress = 100
-            elif saved.status != AgreementItem.STATUS_DONE:
-                saved.completed_date = None
+            normalize_agreement_completion(saved)
             saved.save()
             messages.success(request, "Agreement item updated.")
             return redirect('meeting_detail', pk=meeting.pk)
@@ -1698,25 +1241,7 @@ def agreement_quick_update(request, pk, item_pk):
     meeting = get_object_or_404(Meeting, pk=pk, household=household)
     item = get_object_or_404(AgreementItem, pk=item_pk, meeting=meeting)
     if request.method == 'POST':
-        new_status = request.POST.get('status')
-        new_progress = request.POST.get('progress')
-        if new_status in dict(AgreementItem.STATUS_CHOICES):
-            item.status = new_status
-        if new_progress is not None:
-            try:
-                p = max(0, min(100, int(new_progress)))
-                item.progress = p
-                if p == 100 and item.status != AgreementItem.STATUS_DONE:
-                    item.status = AgreementItem.STATUS_DONE
-            except (TypeError, ValueError):
-                pass
-        if item.status == AgreementItem.STATUS_DONE:
-            if not item.completed_date:
-                item.completed_date = timezone.now().date()
-            item.progress = 100
-        else:
-            item.completed_date = None
-        item.save()
+        quick_update_agreement(item, request.POST.get('status'), request.POST.get('progress'))
     return redirect('meeting_detail', pk=meeting.pk)
 
 
@@ -1803,36 +1328,10 @@ def goal_contribute(request, pk):
     if request.method == 'POST':
         form = GoalContributionForm(request.POST)
         if form.is_valid():
-            with db_transaction.atomic():
-                contrib = form.save(commit=False)
-                contrib.goal = goal
-                contrib.user = request.user
-                if form.cleaned_data.get('record_as_expense'):
-                    cat, _ = Category.objects.get_or_create(
-                        household=household, name='Savings',
-                        category_type=Category.EXPENSE,
-                        defaults={'color': '#0d6efd', 'icon': 'bi-piggy-bank'},
-                    )
-                    tx = Transaction.objects.create(
-                        household=household, user=request.user,
-                        category=cat, transaction_type=Transaction.EXPENSE,
-                        amount=contrib.amount,
-                        currency=goal.currency or household.base_currency,
-                        description=f"Contribution to {goal.name}",
-                        payee=goal.name, date=contrib.date,
-                        source=Transaction.SOURCE_MANUAL,
-                    )
-                    contrib.transaction = tx
-                contrib.save()
-                # Bump goal's current_amount
-                Goal.objects.filter(pk=goal.pk).update(
-                    current_amount=Decimal(goal.current_amount) + Decimal(contrib.amount)
-                )
-                goal.refresh_from_db()
-                # Auto-flip to achieved
-                if goal.current_amount >= goal.target_amount and goal.status == Goal.STATUS_ACTIVE:
-                    goal.status = Goal.STATUS_ACHIEVED
-                    goal.save(update_fields=['status'])
+            contrib = record_goal_contribution(
+                goal, form.save(commit=False), request.user,
+                record_as_expense=form.cleaned_data.get('record_as_expense'),
+            )
             messages.success(request, f"Added {contrib.amount} to {goal.name}.")
             return redirect('goal_detail', pk=goal.pk)
     else:
@@ -1849,13 +1348,7 @@ def goal_contribution_delete(request, pk, contrib_pk):
     goal = get_object_or_404(Goal, pk=pk, household=household)
     contrib = get_object_or_404(GoalContribution, pk=contrib_pk, goal=goal)
     if request.method == 'POST':
-        with db_transaction.atomic():
-            Goal.objects.filter(pk=goal.pk).update(
-                current_amount=Decimal(goal.current_amount) - Decimal(contrib.amount)
-            )
-            if contrib.transaction_id:
-                contrib.transaction.delete()
-            contrib.delete()
+        delete_goal_contribution(goal, contrib)
         messages.info(request, "Contribution removed.")
     return redirect('goal_detail', pk=goal.pk)
 
@@ -1978,31 +1471,10 @@ def receivable_create(request):
     if request.method == 'POST':
         form = ReceivableForm(request.POST, household=household)
         if form.is_valid():
-            with db_transaction.atomic():
-                r = form.save(commit=False)
-                r.household = household
-                if not r.currency:
-                    r.currency = household.base_currency
-                if not r.original_amount:
-                    r.original_amount = r.balance
-                r.save()
-                # Optionally record the lending as a one-off expense
-                if form.cleaned_data.get('record_as_expense'):
-                    cat, _ = Category.objects.get_or_create(
-                        household=household, name='Lent to Others',
-                        category_type=Category.EXPENSE,
-                        defaults={'color': '#fd7e14', 'icon': 'bi-cash-stack'},
-                    )
-                    Transaction.objects.create(
-                        household=household, user=request.user,
-                        category=cat, transaction_type=Transaction.EXPENSE,
-                        amount=r.balance,
-                        currency=r.currency,
-                        description=f"Lent to {r.debtor_name}",
-                        payee=r.debtor_name,
-                        date=r.lent_date,
-                        source=Transaction.SOURCE_MANUAL,
-                    )
+            r = form.save(commit=False)
+            r.household = household
+            create_receivable(r, request.user,
+                              record_as_expense=form.cleaned_data.get('record_as_expense'))
             messages.success(request, f"Recorded loan to {r.debtor_name}.")
             return redirect('receivable_detail', pk=r.pk)
     else:
@@ -2069,36 +1541,10 @@ def receivable_payment_create(request, pk):
     if request.method == 'POST':
         form = ReceivablePaymentForm(request.POST, household=household, receivable=receivable)
         if form.is_valid():
-            with db_transaction.atomic():
-                payment = form.save(commit=False)
-                payment.receivable = receivable
-                if not payment.currency:
-                    payment.currency = receivable.currency or household.base_currency
-                if form.cleaned_data.get('record_as_income'):
-                    cat, _ = Category.objects.get_or_create(
-                        household=household, name='Loan Repayments',
-                        category_type=Category.INCOME,
-                        defaults={'color': '#20c997', 'icon': 'bi-cash-stack'},
-                    )
-                    tx = Transaction.objects.create(
-                        household=household, user=request.user,
-                        category=cat, transaction_type=Transaction.INCOME,
-                        amount=payment.amount, currency=payment.currency,
-                        description=f"Repayment from {receivable.debtor_name}",
-                        payee=receivable.debtor_name,
-                        date=payment.date,
-                        source=Transaction.SOURCE_MANUAL,
-                    )
-                    payment.transaction = tx
-                payment.save()
-                # Decrement outstanding balance, clamped at 0
-                new_balance = max(Decimal('0'),
-                                  Decimal(receivable.balance) - Decimal(payment.amount))
-                fields = {'balance': new_balance}
-                # Auto-mark fully paid
-                if new_balance == 0 and receivable.status == Receivable.STATUS_ACTIVE:
-                    fields['status'] = Receivable.STATUS_PAID
-                Receivable.objects.filter(pk=receivable.pk).update(**fields)
+            payment = record_receivable_payment(
+                receivable, form.save(commit=False), request.user,
+                record_as_income=form.cleaned_data.get('record_as_income'),
+            )
             messages.success(request, f"Recorded repayment of {payment.amount}.")
             return redirect('receivable_detail', pk=receivable.pk)
     else:
@@ -2117,14 +1563,7 @@ def receivable_payment_delete(request, pk, payment_pk):
     receivable = get_object_or_404(Receivable, pk=pk, household=household)
     payment = get_object_or_404(ReceivablePayment, pk=payment_pk, receivable=receivable)
     if request.method == 'POST':
-        with db_transaction.atomic():
-            Receivable.objects.filter(pk=receivable.pk).update(
-                balance=Decimal(receivable.balance) + Decimal(payment.amount),
-                status=Receivable.STATUS_ACTIVE,
-            )
-            if payment.transaction_id:
-                payment.transaction.delete()
-            payment.delete()
+        delete_receivable_payment(receivable, payment)
         messages.info(request, "Repayment removed and balance restored.")
         return redirect('receivable_detail', pk=receivable.pk)
     return render(request, 'budget_app/receivable_payment_confirm_delete.html', {
@@ -2142,10 +1581,7 @@ def chat_view(request):
     household = get_user_household(request.user)
     messages_qs = household.chat_messages.select_related('sender').all()
     # Mark all chat as read for this user
-    ChatReadState.objects.update_or_create(
-        user=request.user, household=household,
-        defaults={'last_read_at': timezone.now()},
-    )
+    mark_chat_read(household, request.user)
     return render(request, 'budget_app/chat.html', {
         'chat_messages': messages_qs,
         'members': household.members.all(),
@@ -2162,10 +1598,7 @@ def chat_recent(request):
     # Reverse so the JS gets them oldest-first (so it can append without sorting)
     messages_list = list(reversed(list(qs)))
     # Mark as read when the widget loads them
-    ChatReadState.objects.update_or_create(
-        user=request.user, household=household,
-        defaults={'last_read_at': timezone.now()},
-    )
+    mark_chat_read(household, request.user)
     return JsonResponse({
         'messages': [
             {
@@ -2191,21 +1624,7 @@ def chat_send(request):
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
             return JsonResponse({'ok': False, 'error': 'empty'}, status=400)
         return redirect('chat')
-    msg = ChatMessage.objects.create(household=household, sender=request.user, body=body[:4000])
-    # Mark sender's last-read up to (and including) this message
-    ChatReadState.objects.update_or_create(
-        user=request.user, household=household,
-        defaults={'last_read_at': msg.created_at},
-    )
-    push_to_household(household, {
-        'kind': 'chat.new',
-        'id': msg.id,
-        'sender_id': msg.sender_id,
-        'sender_name': msg.sender.username,
-        'body': msg.body,
-        'created_at': msg.created_at.isoformat(),
-        'created_at_display': timezone.localtime(msg.created_at).strftime('%b %d, %H:%M'),
-    })
+    msg = send_chat_message(household, request.user, body)
     if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
         return JsonResponse({'ok': True, 'id': msg.id})
     return redirect('chat')
@@ -2215,178 +1634,20 @@ def chat_send(request):
 # MONTHLY REPORT
 # ============================================================
 
-def _month_range_of(year, month):
-    first = date(year, month, 1)
-    return month_range(first)
-
-
-def _add_months_back(d, n):
-    m = d.month - 1 - n
-    year = d.year + (m // 12)
-    return d.replace(year=year, month=(m % 12) + 1, day=1)
-
-
-def _pct_change(now_val, prev_val):
-    """Return percentage change (now - prev) / prev * 100, or None if undefined."""
-    if not prev_val:
-        return None
-    return float(((now_val - prev_val) / prev_val) * 100)
-
-
 @login_required
 @ensure_household
 def monthly_report(request):
-    from django.db.models import Count
     household = get_user_household(request.user)
     today = timezone.now().date()
     try:
         year = int(request.GET.get('year', today.year))
         month = int(request.GET.get('month', today.month))
+        date(year, month, 1)
     except (TypeError, ValueError):
         year, month = today.year, today.month
-    target = date(year, month, 1)
-    month_start, month_end = _month_range_of(year, month)
-
-    # Prev / next month for nav
-    prev_target = (target - timedelta(days=1)).replace(day=1)
-    if month == 12:
-        next_target = date(year + 1, 1, 1)
-    else:
-        next_target = date(year, month + 1, 1)
-
-    # All transactions in the month
-    qs = household.transactions.filter(date__gte=month_start, date__lte=month_end)
-    inc = qs.filter(transaction_type=Transaction.INCOME).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
-    exp = qs.filter(transaction_type=Transaction.EXPENSE).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
-    net = inc - exp
-    savings_rate = float(net / inc * 100) if inc else None
-
-    # Previous month comparison
-    prev_start, prev_end = _month_range_of(prev_target.year, prev_target.month)
-    prev_qs = household.transactions.filter(date__gte=prev_start, date__lte=prev_end)
-    prev_inc = prev_qs.filter(transaction_type=Transaction.INCOME).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
-    prev_exp = prev_qs.filter(transaction_type=Transaction.EXPENSE).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
-    inc_delta = _pct_change(inc, prev_inc)
-    exp_delta = _pct_change(exp, prev_exp)
-
-    # By member
-    members_data = []
-    for member in household.members.all():
-        m_inc = qs.filter(user=member, transaction_type=Transaction.INCOME).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
-        m_exp = qs.filter(user=member, transaction_type=Transaction.EXPENSE).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
-        exp_share = float(m_exp / exp * 100) if exp else 0
-        inc_share = float(m_inc / inc * 100) if inc else 0
-        members_data.append({
-            'user': member, 'income': m_inc, 'expense': m_exp,
-            'net': m_inc - m_exp,
-            'expense_share_pct': round(exp_share, 1),
-            'income_share_pct': round(inc_share, 1),
-        })
-
-    # Spending by category (with %-of-total)
-    by_category_raw = list(
-        qs.filter(transaction_type=Transaction.EXPENSE, category__isnull=False)
-        .values('category__name', 'category__color', 'category__icon')
-        .annotate(total=Sum('amount_base'), n=Count('id'))
-        .order_by('-total')
-    )
-    by_category = []
-    for c in by_category_raw:
-        c['pct'] = float(c['total'] / exp * 100) if exp else 0
-        by_category.append(c)
-
-    # Top payees (expense only)
-    top_payees = list(
-        qs.filter(transaction_type=Transaction.EXPENSE).exclude(payee='')
-        .values('payee')
-        .annotate(total=Sum('amount_base'), n=Count('id'))
-        .order_by('-total')[:10]
-    )
-
-    # Top single transactions (largest by absolute amount_base)
-    top_transactions = list(qs.order_by('-amount_base').select_related('user', 'category')[:10])
-
-    # Budget performance
-    budget_perf = []
-    for b in Budget.objects.filter(household=household, month=month_start).select_related('category'):
-        spent = qs.filter(transaction_type=Transaction.EXPENSE, category=b.category).aggregate(s=Sum('amount_base'))['s'] or Decimal('0')
-        pct = float(spent / b.monthly_limit * 100) if b.monthly_limit else 0
-        budget_perf.append({
-            'category': b.category, 'limit': b.monthly_limit, 'spent': spent,
-            'pct': min(round(pct, 1), 999),
-            'over': spent > b.monthly_limit,
-            'remaining': max(Decimal('0'), b.monthly_limit - spent),
-        })
-
-    # Money requests resolved this month
-    resolved_qs = household.money_requests.filter(
-        resolved_at__gte=month_start, resolved_at__lte=month_end + timedelta(days=1)
-    )
-    requests_stats = {
-        'approved': resolved_qs.filter(status=MoneyRequest.STATUS_APPROVED).count(),
-        'rejected': resolved_qs.filter(status=MoneyRequest.STATUS_REJECTED).count(),
-        'cancelled': resolved_qs.filter(status=MoneyRequest.STATUS_CANCELLED).count(),
-    }
-
-    # Goal contributions this month
-    goal_contribs = GoalContribution.objects.filter(
-        goal__household=household, date__gte=month_start, date__lte=month_end,
-    ).select_related('goal', 'user')
-    goal_total = sum((Decimal(c.amount) for c in goal_contribs), Decimal('0'))
-
-    # Project spending this month
-    project_spending = list(
-        Project.objects.filter(household=household).annotate(
-            month_spent=Sum('transactions__amount_base',
-                            filter=Q(transactions__date__gte=month_start)
-                                 & Q(transactions__date__lte=month_end)
-                                 & Q(transactions__transaction_type=Transaction.EXPENSE))
-        ).filter(month_spent__gt=0).order_by('-month_spent')
-    )
-
-    # Meetings held this month
-    meetings = household.meetings.filter(meeting_date__gte=month_start, meeting_date__lte=month_end)
-
-    # Debts: payments made this month
-    from .models import LiabilityPayment, ReceivablePayment
-    debt_paid = LiabilityPayment.objects.filter(
-        liability__household=household,
-        date__gte=month_start, date__lte=month_end
-    ).aggregate(s=Sum('amount'))['s'] or Decimal('0')
-    debt_paid_count = LiabilityPayment.objects.filter(
-        liability__household=household,
-        date__gte=month_start, date__lte=month_end
-    ).count()
-
-    receivable_received = ReceivablePayment.objects.filter(
-        receivable__household=household,
-        date__gte=month_start, date__lte=month_end
-    ).aggregate(s=Sum('amount'))['s'] or Decimal('0')
-
-    return render(request, 'budget_app/monthly_report.html', {
-        'target': target,
-        'month_label': target.strftime('%B %Y'),
-        'prev_target': prev_target,
-        'next_target': next_target,
-        'is_current_month': target.year == today.year and target.month == today.month,
-        'income': inc, 'expense': exp, 'net': net, 'savings_rate': savings_rate,
-        'inc_delta': inc_delta, 'exp_delta': exp_delta,
-        'prev_income': prev_inc, 'prev_expense': prev_exp,
-        'members_data': members_data,
-        'by_category': by_category,
-        'top_payees': top_payees,
-        'top_transactions': top_transactions,
-        'budget_perf': budget_perf,
-        'requests_stats': requests_stats,
-        'goal_contribs': list(goal_contribs)[:10],
-        'goal_total': goal_total,
-        'project_spending': project_spending,
-        'meetings': meetings,
-        'debt_paid': debt_paid,
-        'debt_paid_count': debt_paid_count,
-        'receivable_received': receivable_received,
-        'tx_count': qs.count(),
-    })
+    context = monthly_report_data(household, year, month)
+    context['is_current_month'] = year == today.year and month == today.month
+    return render(request, 'budget_app/monthly_report.html', context)
 
 
 @login_required
@@ -2404,19 +1665,8 @@ def monthly_report_csv(request, year, month):
     response['Content-Disposition'] = (
         f'attachment; filename="report_{year}-{month:02d}.csv"'
     )
-    writer = csv.writer(response)
-    writer.writerow(['date', 'type', 'amount', 'currency', 'amount_base',
-                     'category', 'payee', 'description', 'member', 'source', 'project'])
     qs = household.transactions.filter(
         date__gte=month_start, date__lte=month_end
     ).select_related('user', 'category', 'currency', 'project').order_by('date')
-    for t in qs:
-        writer.writerow([
-            t.date.isoformat(), t.transaction_type, t.amount,
-            t.currency.code if t.currency else '',
-            t.amount_base or '',
-            t.category.name if t.category else '',
-            t.payee, t.description, t.user.username, t.source,
-            t.project.name if t.project else '',
-        ])
+    write_transactions_csv(response, qs, include_project=True)
     return response

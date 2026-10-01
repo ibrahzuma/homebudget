@@ -285,6 +285,12 @@ class AgreementItemForm(BootstrapMixin, forms.ModelForm):
         if household:
             self.fields['owner'].queryset = household.members.all()
 
+    def clean_progress(self):
+        progress = self.cleaned_data.get('progress')
+        if progress is not None and not 0 <= progress <= 100:
+            raise forms.ValidationError('Progress must be between 0 and 100.')
+        return progress
+
 
 # ------------- Goals & Projects -------------
 
