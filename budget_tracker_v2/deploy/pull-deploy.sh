@@ -62,12 +62,24 @@ if git -C "$SRC" rev-parse --git-dir >/dev/null 2>&1; then
     fi
 else
     die "$SRC is not a git checkout, so there is nothing to pull.
-  This tree was uploaded rather than cloned. Either rsync the new code up and
-  re-run, or convert it once:
-      cd $SRC && git init && git remote add origin \\
-          https://github.com/ibrahzuma/homebudget.git && \\
-          git fetch origin main && git reset --hard origin/main
-  Check 'git status' afterwards for local edits you would lose."
+
+  This tree was uploaded rather than cloned, and it holds the *contents* of
+  budget_tracker_v2/ — manage.py is at its root. The repository keeps manage.py
+  one level down, so do NOT 'git init && git reset --hard' in place: that would
+  rearrange this directory and break the unit file that points at it.
+
+  Clone alongside and point SRC at the app directory inside it instead:
+
+      git clone https://github.com/ibrahzuma/homebudget.git /opt/homebudget/repo
+      # then either run this script with
+      #     SRC=/opt/homebudget/repo sudo -E $0
+      # or switch the service over for good: set
+      #     WorkingDirectory=/opt/homebudget/repo/budget_tracker_v2
+      # in 'systemctl edit --full $SERVICE', keeping the old tree until the new
+      # one has served a request.
+
+  Or keep uploading: rsync the new code over $SRC and re-run — every step after
+  the pull works the same either way."
 fi
 
 # ------------------------------------------------------- 3. environment + deps
