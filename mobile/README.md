@@ -11,7 +11,8 @@ It covers every section of the web app: dashboard, transactions (filters, search
 infinite scroll), categories, budgets, recurring items, the cash-flow calendar, the
 forecast, auto-categorise rules, alerts, money requests with approve/reject,
 household chat, net worth and assets, debts and payments, money lent and repayments,
-savings goals, projects, meetings and action items, currencies and exchange rates,
+savings goals, vikoba and mchezo groups, projects, meetings and action items,
+currencies and exchange rates,
 the monthly report, CSV import/export, and household settings with invite links.
 
 ## Run
@@ -52,41 +53,71 @@ page with install instructions, linked from the login screen. Copy a release
 build to the path the server's `APK_PATH` points at and bump `APK_VERSION`; the
 steps are in [`../budget_tracker_v2/README.md`](../budget_tracker_v2/README.md#publishing-the-android-app).
 
-## Push notifications
+## Notifications
 
-Money requests, approvals and chat messages pop up on the phone even when the
-app is closed. Two paths carry the same events:
+Money requests, approvals and chat messages reach the phone even when the app is
+closed. Three pieces, all raising the same notification through
+`lib/core/notifications.dart`:
 
-- **`/ws/notify/` WebSocket** (`lib/core/realtime.dart`) while the app is open —
-  live list updates, badges and in-app snackbars.
-- **Firebase Cloud Messaging** (`lib/core/push.dart`) for everything else.
-  Android and iOS draw the notification themselves while the app is away;
-  tapping it opens the request or the chat tab. In the foreground the app draws
-  the banner itself, and skips it while the tab that already shows the event
-  live is on top.
+| | When | Needs |
+|---|---|---|
+| `realtime.dart` | app open | nothing — the `/ws/notify/` socket |
+| `watch_service.dart` | **Android**, app closed | nothing — our own server |
+| `push.dart` | **iOS**, app closed | a Firebase project |
 
-The app runs fine **without** Firebase configured — `PushService` logs one line
-and disables itself, the Gradle plugin is skipped when `google-services.json` is
-absent, and the WebSocket keeps working. Only background notifications are lost.
+`main.dart` picks the second or third by platform (`selfHostedAlertsSupported`),
+behind one `BackgroundAlerts` interface, so nothing above that layer knows which
+is running.
 
-### Setting it up
+### Android: the watcher (no Google, no Firebase)
+
+An Android foreground service keeps the same `/ws/notify/` socket open with the
+same API token and raises notifications itself, so nothing leaves
+budget.hotone.co.tz. The service runs in its own isolate: the socket URL, token
+and user id are handed over through the plugin's shared store before it starts,
+and events come back through `sendDataToMain` so open screens still refresh.
+
+What the user sees, and the honest limits:
+
+- **A permanent low-priority notice** ("Watching for requests and messages").
+  Android requires it while a foreground service runs; it cannot be hidden. The
+  actual alerts arrive on a separate high-importance channel.
+- **Battery optimisation must be off for the app**, or the system kills the
+  service once the phone dozes. `start()` asks for the exemption at sign-in —
+  if the user declines, notifications stop arriving once the phone sleeps.
+  Tecno, Infinix, Xiaomi and Oppo are the aggressive ones; some need the app
+  added to a "protected apps" list by hand, which no API can do for you.
+- The service is declared `foregroundServiceType="remoteMessaging"`, which is
+  the type Android intends for exactly this and, unlike `dataSync`, is not
+  capped at 6 hours a day on Android 15.
+- A dead socket is caught two ways: `onDone`/`onError` reconnect with capped
+  backoff, and a 60-second watchdog tick reconnects if the socket vanished
+  without either firing.
+
+Nothing to configure — it works against whatever `API_ORIGIN` the build points
+at.
+
+### iOS: Firebase
+
+Only APNs can wake a closed app on iOS, so there is no self-hosted option
+there. `PushService` registers an FCM token at `POST devices/` and the server
+sends through Firebase (`budget_app/push.py`).
 
 1. Create a Firebase project (the same one the server points
    `FCM_CREDENTIALS_FILE` at — see `../budget_tracker_v2/README.md`).
-2. **Android:** add an Android app with package name
-   `tz.co.hotone.homebudget_mobile`, download `google-services.json` and put it
-   at `android/app/google-services.json`.
-3. **iOS:** add an iOS app with the same bundle id, put
+2. Add an iOS app with bundle id `tz.co.hotone.homebudgetMobile`, put
    `GoogleService-Info.plist` in `ios/Runner/` **and add it to the Runner target
-   in Xcode** (a file on disk alone is not enough). Then upload an APNs
-   authentication key under Project settings → Cloud Messaging; push on iOS
-   needs a paid Apple Developer account. `ios/Runner/Runner.entitlements` and
-   the `remote-notification` background mode are already committed.
-4. `flutter run` and sign in. The app asks for notification permission, then
-   registers its FCM token with `POST devices/`; it re-registers whenever
-   Firebase rotates the token, and unregisters on sign-out.
+   in Xcode** (a file on disk alone is not enough). Upload an APNs
+   authentication key under Project settings → Cloud Messaging; this needs a
+   paid Apple Developer account. `ios/Runner/Runner.entitlements` and the
+   `remote-notification` background mode are already committed.
 
-Server-side configuration, including which events push to whom, is in
+The Firebase path still works on Android if you would rather use it — add
+`android/app/google-services.json` and flip `selfHostedAlertsSupported` in
+`watch_service.dart`. The Gradle plugin is applied only when that file exists,
+so a build without it still compiles.
+
+Server-side configuration, including which events notify whom, is in
 [`../docs/mobile-api.md`](../docs/mobile-api.md#push-notifications).
 
 Android draws the notification icon as a white silhouette. The app currently
@@ -103,7 +134,9 @@ lib/
 │   ├── api.dart              ApiClient + ApiException (Django form errors per field)
 │   ├── session.dart          token in secure storage, me/household/badges, form pickers (meta/)
 │   ├── realtime.dart         WebSocket with token header, auto-reconnect
-│   ├── push.dart             FCM registration, notifications while the app is away, tap routing
+│   ├── notifications.dart    the notification channel, drawing them, tap payloads, BackgroundAlerts
+│   ├── watch_service.dart    Android foreground service holding the socket open (self-hosted)
+│   ├── push.dart             FCM registration and delivery (iOS)
 │   ├── models.dart           typed models for every API payload
 │   ├── format.dart           money/date formatting
 │   └── icons.dart            Bootstrap icon names (stored by the server) → Material icons

@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:provider/provider.dart';
 
+import 'core/notifications.dart';
 import 'core/push.dart';
 import 'core/realtime.dart';
 import 'core/session.dart';
+import 'core/watch_service.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/household/setup_screen.dart';
 import 'screens/shell.dart';
@@ -11,21 +14,27 @@ import 'widgets/common.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Lets the Android watcher's isolate talk to this one.
+  FlutterForegroundTask.initCommunicationPort();
   final session = Session();
-  final push = PushService(session);
-  // Unregister this device while the API token is still valid.
-  session.onSignOut = push.stop;
+  // Android keeps everything on our own server with a foreground service
+  // holding the /ws/notify/ socket; iOS has no equivalent, so it goes through
+  // Firebase. Both satisfy the same interface — see notifications.dart.
+  final BackgroundAlerts alerts =
+      selfHostedAlertsSupported ? WatchService(session) : PushService(session);
+  // Stop delivering to this device while the API token is still valid.
+  session.onSignOut = alerts.stop;
   // Before the first frame, so a notification that launched the app is picked
   // up by the shell rather than missed.
-  await push.initialise();
+  await alerts.initialise();
   session.restore();
-  runApp(HomeBudgetApp(session: session, push: push));
+  runApp(HomeBudgetApp(session: session, alerts: alerts));
 }
 
 class HomeBudgetApp extends StatelessWidget {
-  const HomeBudgetApp({super.key, required this.session, required this.push});
+  const HomeBudgetApp({super.key, required this.session, required this.alerts});
   final Session session;
-  final PushService push;
+  final BackgroundAlerts alerts;
 
   @override
   Widget build(BuildContext context) {
@@ -33,7 +42,7 @@ class HomeBudgetApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider.value(value: session),
         Provider<Realtime>(create: (_) => Realtime(session), dispose: (_, r) => r.dispose()),
-        Provider<PushService>.value(value: push),
+        Provider<BackgroundAlerts>.value(value: alerts),
       ],
       child: MaterialApp(
         title: 'Home Budget',
@@ -86,15 +95,15 @@ class _AuthGateState extends State<AuthGate> {
   Widget build(BuildContext context) {
     final session = context.watch<Session>();
     final rt = context.read<Realtime>();
-    final push = context.read<PushService>();
+    final alerts = context.read<BackgroundAlerts>();
     if (session.state != _last) {
       _last = session.state;
       if (session.state == SessionState.ready) {
         rt.connect();
-        push.start();
+        alerts.start();
       } else {
         rt.disconnect();
-        if (session.state == SessionState.signedOut) push.stop();
+        if (session.state == SessionState.signedOut) alerts.stop();
       }
     }
 

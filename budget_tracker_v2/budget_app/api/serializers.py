@@ -539,3 +539,82 @@ def monthly_report(r):
         'receivable_received': money(r['receivable_received']),
         'transaction_count': r['tx_count'],
     }
+
+
+def group_member(m):
+    return {
+        'id': m.id,
+        'name': m.name,
+        'turn_order': m.turn_order,
+        'turn_date': iso(m.turn_date),
+        'is_mine': m.is_mine,
+        'received_on': iso(m.received_on),
+        'has_received': m.has_received,
+        'phone': m.phone,
+        'notes': m.notes,
+    }
+
+
+def group_contribution(c):
+    return {
+        'id': c.id,
+        'date': iso(c.date),
+        'amount': money(c.amount),
+        'currency': currency(c.currency),
+        'user': user_brief(c.user),
+        'notes': c.notes,
+        'transaction': c.transaction_id,
+        'money_request': c.money_request_id,
+        'awaiting_approval': c.awaiting_approval,
+    }
+
+
+def group_payout(p):
+    return {
+        'id': p.id,
+        'date': iso(p.date),
+        'amount': money(p.amount),
+        'currency': currency(p.currency),
+        'user': user_brief(p.user),
+        'member': p.member_id,
+        'notes': p.notes,
+        'transaction': p.transaction_id,
+    }
+
+
+def contribution_group(g, detail=False):
+    """A vikoba or mchezo. ``detail=True`` adds the rotation and the ledgers."""
+    next_turn = g.next_turn if g.is_mchezo else None
+    data = {
+        'id': g.id,
+        'name': g.name,
+        'group_type': g.group_type,
+        'group_type_display': g.get_group_type_display(),
+        'contribution_amount': money(g.contribution_amount),
+        'currency': currency(g.currency),
+        'frequency': g.frequency,
+        'frequency_display': g.get_frequency_display(),
+        'start_date': iso(g.start_date),
+        'next_due_date': iso(g.next_due_date),
+        'days_until_due': g.days_until_due,
+        'is_due_soon': g.is_due_soon,
+        'is_overdue': g.is_overdue,
+        'is_active': g.is_active,
+        'icon': g.icon,
+        'color': g.color,
+        'notes': g.notes,
+        'total_contributed': money(g.total_contributed),
+        'total_received': money(g.total_received),
+        'net_position': money(g.net_position),
+        'outstanding_loans': money(g.outstanding_loans),
+        'member_count': g.member_count,
+        'expected_payout': money(g.expected_payout),
+        'my_turn_date': iso(g.my_turn_date),
+        'next_turn': group_member(next_turn) if next_turn else None,
+    }
+    if detail:
+        data['members'] = [group_member(m) for m in g.members.all()]
+        data['contributions'] = [group_contribution(c) for c in g.contributions.all()[:100]]
+        data['payouts'] = [group_payout(p) for p in g.payouts.all()[:100]]
+        data['loans'] = [liability(l) for l in g.loans.all()]
+    return data

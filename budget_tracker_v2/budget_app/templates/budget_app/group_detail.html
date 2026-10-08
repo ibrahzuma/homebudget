@@ -1,0 +1,257 @@
+{% extends 'budget_app/base.html' %}
+{% load humanize %}
+{% block title %}{{ group.name }}{% endblock %}
+{% block content %}
+
+{% with sym=group.currency.symbol|default:currency_symbol %}
+
+<nav class="mb-3 small">
+    <a href="{% url 'group_list' %}" class="text-decoration-none"><i class="bi bi-chevron-left"></i> Groups</a>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-2">
+    <div>
+        <h2 class="mb-1"><i class="bi {{ group.icon }}" style="color: {{ group.color }}"></i> {{ group.name }}</h2>
+        <small class="text-muted">
+            {{ group.get_group_type_display }} &middot;
+            {{ sym }}{{ group.contribution_amount|floatformat:2|intcomma }} {{ group.get_frequency_display|lower }} &middot;
+            started {{ group.start_date|date:"M Y" }}
+            {% if not group.is_active %} &middot; <span class="badge bg-secondary">Ended</span>{% endif %}
+        </small>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{% url 'group_contribute' group.pk %}" class="btn btn-primary">
+            <i class="bi bi-plus-circle"></i> Contribute</a>
+        <a href="{% url 'group_payout' group.pk %}" class="btn btn-outline-success">
+            <i class="bi bi-cash"></i> Received</a>
+        {% if group.is_vikoba %}
+        <a href="{% url 'group_loan' group.pk %}" class="btn btn-outline-warning">
+            <i class="bi bi-bank"></i> Loan</a>
+        {% endif %}
+        <a href="{% url 'group_edit' group.pk %}" class="btn btn-outline-secondary"><i class="bi bi-pencil"></i></a>
+        <a href="{% url 'group_delete' group.pk %}" class="btn btn-outline-danger"><i class="bi bi-trash"></i></a>
+    </div>
+</div>
+
+{% if group.next_due_date and group.is_active %}
+<div class="alert {% if group.is_overdue %}alert-danger{% elif group.is_due_soon %}alert-warning{% else %}alert-light border{% endif %} d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+        <i class="bi bi-calendar-event"></i>
+        Next collection <strong>{{ group.next_due_date|date:"D, j M Y" }}</strong>
+        {% if group.is_overdue %}&mdash; overdue{% endif %}
+    </div>
+    <a href="{% url 'group_contribute' group.pk %}" class="btn btn-sm btn-primary">Record it</a>
+</div>
+{% endif %}
+
+<!-- Position -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3 col-sm-6">
+        <div class="card stat-card p-3">
+            <small class="text-muted">Paid in</small>
+            <div class="stat-value text-danger">{{ sym }}{{ group.total_contributed|floatformat:2|intcomma }}</div>
+        </div>
+    </div>
+    <div class="col-md-3 col-sm-6">
+        <div class="card stat-card p-3">
+            <small class="text-muted">Received</small>
+            <div class="stat-value text-success">{{ sym }}{{ group.total_received|floatformat:2|intcomma }}</div>
+        </div>
+    </div>
+    <div class="col-md-3 col-sm-6">
+        <div class="card stat-card p-3">
+            <small class="text-muted">{% if group.net_position >= 0 %}Group holds{% else %}Ahead by{% endif %}</small>
+            <div class="stat-value">{{ sym }}{{ group.net_position|floatformat:2|intcomma }}</div>
+        </div>
+    </div>
+    <div class="col-md-3 col-sm-6">
+        <div class="card stat-card p-3">
+            {% if group.is_mchezo %}
+                <small class="text-muted">A full pot</small>
+                <div class="stat-value">
+                    {% if group.expected_payout %}{{ sym }}{{ group.expected_payout|floatformat:2|intcomma }}
+                    {% else %}<span class="text-muted">add members</span>{% endif %}
+                </div>
+            {% else %}
+                <small class="text-muted">Loans outstanding</small>
+                <div class="stat-value text-warning">{{ sym }}{{ group.outstanding_loans|floatformat:2|intcomma }}</div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{% if group.is_mchezo %}
+<!-- The rotation -->
+<div class="card mb-4">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <strong><i class="bi bi-arrow-repeat"></i> The rotation</strong>
+        <a href="{% url 'group_member_create' group.pk %}" class="btn btn-sm btn-outline-primary">
+            <i class="bi bi-person-plus"></i> Add member</a>
+    </div>
+    {% if members %}
+    <div class="table-responsive">
+        <table class="table table-sm mb-0 align-middle">
+            <thead class="table-light">
+                <tr><th>#</th><th>Member</th><th>Collects</th><th>Status</th><th></th></tr>
+            </thead>
+            <tbody>
+            {% for m in members %}
+                <tr {% if m.is_mine %}class="table-primary"{% endif %}>
+                    <td class="text-muted">{{ m.turn_order }}</td>
+                    <td>
+                        {{ m.name }}
+                        {% if m.is_mine %}<span class="badge bg-primary ms-1">You</span>{% endif %}
+                        {% if m.phone %}<small class="text-muted d-block">{{ m.phone }}</small>{% endif %}
+                    </td>
+                    <td>{% if m.turn_date %}{{ m.turn_date|date:"j M Y" }}{% else %}<span class="text-muted">&mdash;</span>{% endif %}</td>
+                    <td>
+                        {% if m.has_received %}
+                            <span class="badge bg-success">Collected {{ m.received_on|date:"j M" }}</span>
+                        {% elif group.next_turn.pk == m.pk %}
+                            <span class="badge bg-warning text-dark">Next up</span>
+                        {% else %}
+                            <span class="text-muted small">Waiting</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-end">
+                        <a href="{% url 'group_member_edit' group.pk m.pk %}"
+                           class="btn btn-sm btn-outline-secondary"><i class="bi bi-pencil"></i></a>
+                        <form method="post" action="{% url 'group_member_delete' group.pk m.pk %}"
+                              class="d-inline">
+                            {% csrf_token %}
+                            <button class="btn btn-sm btn-outline-danger"><i class="bi bi-x"></i></button>
+                        </form>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="card-body text-muted small">
+        Add everyone in the group and the date each one collects. The app then knows what a
+        full pot is worth and when your turn comes round.
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if group.is_vikoba %}
+<!-- Loans taken from this vikoba -->
+<div class="card mb-4">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <strong><i class="bi bi-bank"></i> Loans from this vikoba</strong>
+        <a href="{% url 'group_loan' group.pk %}" class="btn btn-sm btn-outline-warning">
+            <i class="bi bi-plus-lg"></i> Record a loan</a>
+    </div>
+    {% if loans %}
+    <div class="table-responsive">
+        <table class="table table-sm mb-0 align-middle">
+            <thead class="table-light">
+                <tr><th>Loan</th><th>Borrowed</th><th>Still owed</th><th>Due</th><th></th></tr>
+            </thead>
+            <tbody>
+            {% for l in loans %}
+                <tr>
+                    <td>{{ l.name }}</td>
+                    <td class="text-muted">{{ l.currency.symbol|default:sym }}{{ l.original_amount|default:l.balance|floatformat:2|intcomma }}</td>
+                    <td><strong>{{ l.currency.symbol|default:sym }}{{ l.balance|floatformat:2|intcomma }}</strong></td>
+                    <td>{% if l.due_date %}{{ l.due_date|date:"j M Y" }}{% else %}<span class="text-muted">&mdash;</span>{% endif %}</td>
+                    <td class="text-end">
+                        <a href="{% url 'debt_detail' l.pk %}" class="btn btn-sm btn-outline-secondary">
+                            Payments</a>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <div class="card-footer bg-white small text-muted">
+        These are ordinary debts, so they also appear under
+        <a href="{% url 'debt_list' %}">Debts</a>, where repayments are recorded.
+    </div>
+    {% else %}
+    <div class="card-body text-muted small">
+        No loan taken from this vikoba. If you borrow, record it here and it becomes a debt
+        with the usual repayment tracking.
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<div class="row g-3">
+    <!-- Contributions -->
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header bg-white"><strong><i class="bi bi-arrow-up-circle text-danger"></i> My contributions</strong></div>
+            {% if contributions %}
+            <div class="list-group list-group-flush">
+                {% for c in contributions %}
+                <div class="list-group-item d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>{{ c.currency.symbol|default:sym }}{{ c.amount|floatformat:2|intcomma }}</strong>
+                        <small class="text-muted d-block">
+                            {{ c.date|date:"j M Y" }}
+                            {% if c.user %} &middot; {{ c.user.username }}{% endif %}
+                            {% if c.notes %} &middot; {{ c.notes|truncatechars:40 }}{% endif %}
+                        </small>
+                    </div>
+                    <div class="text-end">
+                        {% if c.awaiting_approval %}
+                            <a href="{% url 'request_detail' c.money_request.pk %}"
+                               class="badge bg-warning text-dark text-decoration-none">Awaiting approval</a>
+                        {% elif c.transaction %}
+                            <span class="badge bg-light text-muted">Recorded</span>
+                        {% elif c.money_request %}
+                            <span class="badge bg-secondary">{{ c.money_request.get_status_display }}</span>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="card-body text-muted small">Nothing paid in yet.</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Payouts -->
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header bg-white"><strong><i class="bi bi-arrow-down-circle text-success"></i> Money received</strong></div>
+            {% if payouts %}
+            <div class="list-group list-group-flush">
+                {% for p in payouts %}
+                <div class="list-group-item d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>{{ p.currency.symbol|default:sym }}{{ p.amount|floatformat:2|intcomma }}</strong>
+                        <small class="text-muted d-block">
+                            {{ p.date|date:"j M Y" }}
+                            {% if p.member %} &middot; turn {{ p.member.turn_order }}{% endif %}
+                            {% if p.notes %} &middot; {{ p.notes|truncatechars:40 }}{% endif %}
+                        </small>
+                    </div>
+                    {% if p.transaction %}<span class="badge bg-light text-muted">Income</span>{% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="card-body text-muted small">
+                {% if group.is_mchezo %}Your turn has not come round yet.{% else %}No share-out received yet.{% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{% if group.notes %}
+<div class="card mt-3">
+    <div class="card-body">
+        <small class="text-muted d-block mb-1">Notes</small>
+        {{ group.notes|linebreaks }}
+    </div>
+</div>
+{% endif %}
+
+{% endwith %}
+{% endblock %}

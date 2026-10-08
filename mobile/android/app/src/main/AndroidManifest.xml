@@ -3,6 +3,18 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- Money-request and chat notifications (asked for at sign-in on Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- The watcher: a foreground service holding the /ws/notify/ socket open so
+         requests and messages arrive while the app is closed, without Firebase.
+         remoteMessaging is the service type for exactly this, and unlike
+         dataSync it is not subject to Android 15's 6-hour daily cap. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- Without a battery-optimisation exemption the system stops the service
+         once the phone dozes; the app asks for this at sign-in. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+    <!-- So the watcher comes back after a reboot or an app update. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <application
         android:label="Home Budget"
         android:name="${applicationName}"
@@ -38,6 +50,12 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_icon"
             android:resource="@mipmap/ic_launcher" />
+        <!-- The watcher's service. The class name is the plugin's and must not
+             change; see mobile/lib/core/watch_service.dart. -->
+        <service
+            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
+            android:foregroundServiceType="remoteMessaging"
+            android:exported="false" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

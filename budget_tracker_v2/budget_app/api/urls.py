@@ -91,6 +91,15 @@ urlpatterns = [
     path('reports/monthly/', v.MonthlyReportView.as_view()),
     path('reports/monthly/<int:year>/<int:month>/csv/', v.MonthlyReportCSVView.as_view()),
 
+    # Contribution groups: vikoba (savings & loans) and mchezo (rotating pot)
+    path('groups/', v.ContributionGroupListView.as_view()),
+    path('groups/<int:pk>/', v.ContributionGroupDetailView.as_view()),
+    path('groups/<int:pk>/contribute/', v.GroupContributeView.as_view()),
+    path('groups/<int:pk>/payouts/', v.GroupPayoutCreateView.as_view()),
+    path('groups/<int:pk>/loans/', v.GroupLoanCreateView.as_view()),
+    path('groups/<int:pk>/members/', v.GroupMemberListView.as_view()),
+    path('groups/<int:pk>/members/<int:member_pk>/', v.GroupMemberDetailView.as_view()),
+
     path('chat/', v.ChatView.as_view()),
     path('chat/read/', v.ChatReadView.as_view()),
 

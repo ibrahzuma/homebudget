@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/format.dart';
 import '../../core/models.dart';
-import '../../core/push.dart';
+import '../../core/notifications.dart';
 import '../../core/realtime.dart';
 import '../../core/session.dart';
 import '../../widgets/common.dart';
@@ -63,12 +63,12 @@ class _RequestsScreenState extends State<RequestsScreen> {
     _visible = Visibility.of(context);
     // While this tab is up the list reloads and snackbars itself, so a push
     // banner over the top would only repeat it.
-    context.read<PushService>().setMuted('request.', _visible);
+    context.read<BackgroundAlerts>().setMuted('request.', _visible);
   }
 
   @override
   void dispose() {
-    context.read<PushService>().setMuted('request.', false);
+    context.read<BackgroundAlerts>().setMuted('request.', false);
     _sub?.cancel();
     super.dispose();
   }

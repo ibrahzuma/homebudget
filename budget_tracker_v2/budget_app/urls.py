@@ -5,6 +5,21 @@ urlpatterns = [
     path('', views.dashboard, name='dashboard'),
     path('signup/', views.signup_view, name='signup'),
 
+    # Contribution groups: vikoba (savings & loans) and mchezo (rotating pot)
+    path('groups/', views.group_list, name='group_list'),
+    path('groups/new/', views.group_create, name='group_create'),
+    path('groups/<int:pk>/', views.group_detail, name='group_detail'),
+    path('groups/<int:pk>/edit/', views.group_edit, name='group_edit'),
+    path('groups/<int:pk>/delete/', views.group_delete, name='group_delete'),
+    path('groups/<int:pk>/contribute/', views.group_contribute, name='group_contribute'),
+    path('groups/<int:pk>/payout/', views.group_payout, name='group_payout'),
+    path('groups/<int:pk>/loan/', views.group_loan, name='group_loan'),
+    path('groups/<int:pk>/members/new/', views.group_member_create, name='group_member_create'),
+    path('groups/<int:pk>/members/<int:member_pk>/edit/', views.group_member_edit,
+         name='group_member_edit'),
+    path('groups/<int:pk>/members/<int:member_pk>/delete/', views.group_member_delete,
+         name='group_member_delete'),
+
     # Android app (public — no account needed to install it)
     path('download/', views.app_download, name='app_download'),
     path('download/app.apk', views.app_download_file, name='app_download_file'),

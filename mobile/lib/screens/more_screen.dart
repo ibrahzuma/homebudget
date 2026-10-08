@@ -16,6 +16,7 @@ import 'household/household_settings_screen.dart';
 import 'import_export/import_export_screen.dart';
 import 'lent/lent_screen.dart';
 import 'meetings/meetings_screen.dart';
+import 'groups/groups_screen.dart';
 import 'networth/networth_screen.dart';
 import 'projects/projects_screen.dart';
 import 'recurring/recurring_screen.dart';
@@ -63,6 +64,7 @@ class MoreScreen extends StatelessWidget {
           item(Icons.savings_outlined, 'Savings goals', const GoalsScreen()),
           item(Icons.bookmark_outline, 'Projects', const ProjectsScreen()),
           const SectionHeader('Wealth'),
+          item(Icons.groups_outlined, 'Vikoba & Mchezo', const GroupsScreen()),
           item(Icons.account_balance_outlined, 'Net worth & assets', const NetWorthScreen()),
           item(Icons.credit_card, 'Debts', const DebtsScreen()),
           item(Icons.handshake_outlined, 'Money lent', const LentScreen()),

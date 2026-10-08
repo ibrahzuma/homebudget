@@ -15,9 +15,10 @@ from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
 
 from .models import (
-    AgreementItem, Alert, Category, Currency, DeviceToken, ExchangeRate, Goal,
-    Household, HouseholdInvitation, Liability, Meeting, MoneyRequest, Receivable,
-    RecurringTransaction, Transaction,
+    AgreementItem, Alert, Category, ContributionGroup, Currency, DeviceToken,
+    ExchangeRate, Goal, GroupContribution, GroupMember, GroupPayout, Household,
+    HouseholdInvitation, Liability, LiabilityPayment, Meeting, MoneyRequest,
+    Receivable, RecurringTransaction, Transaction,
 )
 from .services import seed_household_defaults
 
@@ -652,6 +653,54 @@ class PushNotificationTests(APITestBase):
         deliver.assert_not_called()
 
 
+class SocketNotificationPayloadTests(APITestBase):
+    """The Android watcher raises notifications from the socket payload, so the
+    title/body and the "who does this concern" keys have to travel over it."""
+
+    def _capture_ws(self):
+        """Collect what push_to_household sends over the channel layer."""
+        from . import services
+        sent = []
+        return sent, mock.patch.object(
+            services, '_push_websocket',
+            side_effect=lambda household, payload: sent.append(payload))
+
+    def test_request_event_carries_its_notification_text(self):
+        sent, patched = self._capture_ws()
+        with patched:
+            self.ok(self.a.post('/api/v1/requests/', {
+                'approver': self.bob.pk, 'amount': '30', 'currency': self.usd.pk,
+                'purpose': 'School fees'}, format='json'), 201)
+        payload = sent[0]
+        self.assertEqual(payload['kind'], 'request.created')
+        self.assertEqual(payload['for_user_id'], self.bob.pk)
+        self.assertEqual(payload['notification']['title'], 'Money request from alice')
+        self.assertIn('School fees', payload['notification']['body'])
+        self.assertEqual(payload['notification']['thread_id'],
+                         f"request-{MoneyRequest.objects.get().pk}")
+        # Targeted at one member, so there is nobody to exclude.
+        self.assertIsNone(payload['notification']['exclude_user_id'])
+
+    def test_chat_event_names_the_sender_to_exclude(self):
+        sent, patched = self._capture_ws()
+        with patched:
+            self.ok(self.a.post('/api/v1/chat/', {'body': 'dinner?'}, format='json'), 201)
+        payload = sent[0]
+        self.assertIsNone(payload.get('for_user_id'))
+        self.assertEqual(payload['notification']['exclude_user_id'], self.alice.pk)
+        self.assertEqual(payload['notification']['title'], 'alice')
+        self.assertEqual(payload['notification']['body'], 'dinner?')
+
+    def test_an_event_with_no_notification_is_unchanged(self):
+        """Events that should not interrupt anyone must not gain the key, or the
+        watcher would raise a notification for them."""
+        from .services import push_to_household
+        sent, patched = self._capture_ws()
+        with patched:
+            push_to_household(self.hh, {'kind': 'txn.changed'})
+        self.assertEqual(sent, [{'kind': 'txn.changed'}])
+
+
 class FCMMessageTests(TestCase):
     """The wire format we hand Firebase, and how its replies are read."""
 
@@ -763,3 +812,428 @@ class AppDownloadPageTests(TestCase):
             release = mobile_app_release()
         self.assertFalse(release['available'])
         self.assertIsNone(release['size_mb'])
+
+
+class ContributionGroupTests(APITestBase):
+    """Vikoba (savings + loans) and mchezo (rotating pot)."""
+
+    def make_group(self, group_type='mchezo', **kw):
+        body = {'name': 'Mama Lishe', 'group_type': group_type,
+                'contribution_amount': '50000', 'currency': self.tzs.pk,
+                'frequency': 'monthly',
+                'start_date': date(2026, 1, 5).isoformat(),
+                'next_due_date': date(2026, 2, 5).isoformat()}
+        body.update(kw)
+        g = ContributionGroup.objects.create(
+            household=self.hh, name=body['name'], group_type=body['group_type'],
+            contribution_amount=Decimal(body['contribution_amount']),
+            currency=self.tzs, frequency=body['frequency'],
+            start_date=date.fromisoformat(body['start_date']),
+            next_due_date=date.fromisoformat(body['next_due_date']))
+        return g
+
+    # ---- contributions ----
+
+    def test_contribution_recorded_directly_becomes_an_expense(self):
+        from .services import record_group_contribution
+        g = self.make_group()
+        c = record_group_contribution(
+            g, GroupContribution(amount=Decimal('50000'), date=date(2026, 2, 5)),
+            self.alice)
+        self.assertIsNotNone(c.transaction)
+        tx = c.transaction
+        self.assertEqual((tx.transaction_type, tx.user, tx.currency), ('expense', self.alice, self.tzs))
+        self.assertEqual(tx.category.name, 'Vikoba & Mchezo')
+        self.assertEqual(tx.category.category_type, 'expense')
+        self.assertEqual(g.total_contributed, Decimal('50000'))
+        # The collection date moves on to the next month.
+        g.refresh_from_db()
+        self.assertEqual(g.next_due_date, date(2026, 3, 5))
+
+    def test_contribution_can_be_recorded_without_touching_the_books(self):
+        from .services import record_group_contribution
+        g = self.make_group()
+        c = record_group_contribution(
+            g, GroupContribution(amount=Decimal('50000'), date=date(2026, 2, 5)),
+            self.alice, record_as_expense=False)
+        self.assertIsNone(c.transaction)
+        self.assertFalse(Transaction.objects.exists())
+        self.assertEqual(g.total_contributed, Decimal('50000'))
+
+    def test_contribution_through_approval_waits_for_the_partner(self):
+        from .services import request_group_contribution, approve_money_request
+        g = self.make_group(group_type='vikoba')
+        req = request_group_contribution(
+            g, GroupContribution(amount=Decimal('50000'), date=date(2026, 2, 5)),
+            self.alice, self.bob)
+        self.assertEqual((req.requester, req.approver, req.status),
+                         (self.alice, self.bob, 'pending'))
+        self.assertIn('Mama Lishe', req.purpose)
+        contribution = GroupContribution.objects.get()
+        self.assertTrue(contribution.awaiting_approval)
+        # Nothing hits the books until it is approved.
+        self.assertIsNone(contribution.transaction)
+        self.assertFalse(Transaction.objects.exists())
+
+        approve_money_request(req)
+        contribution.refresh_from_db()
+        self.assertIsNotNone(contribution.transaction)
+        self.assertEqual(contribution.transaction.transaction_type, 'expense')
+        self.assertEqual(contribution.transaction.source, 'request')
+        self.assertFalse(contribution.awaiting_approval)
+        g.refresh_from_db()
+        self.assertEqual(g.next_due_date, date(2026, 3, 5))
+
+    def test_a_rejected_contribution_never_hits_the_books(self):
+        from .services import request_group_contribution, reject_money_request
+        g = self.make_group()
+        req = request_group_contribution(
+            g, GroupContribution(amount=Decimal('50000'), date=date(2026, 2, 5)),
+            self.alice, self.bob)
+        reject_money_request(req, 'not this month')
+        contribution = GroupContribution.objects.get()
+        self.assertIsNone(contribution.transaction)
+        self.assertFalse(Transaction.objects.exists())
+        self.assertEqual(self.hh.contribution_groups.get().next_due_date, date(2026, 2, 5))
+
+    # ---- payouts ----
+
+    def test_a_mchezo_turn_comes_in_as_income_and_closes_the_slot(self):
+        from .services import record_group_payout
+        g = self.make_group()
+        mine = GroupMember.objects.create(group=g, name='Us', turn_order=2,
+                                          turn_date=date(2026, 3, 5), is_mine=True)
+        GroupMember.objects.create(group=g, name='Asha', turn_order=1,
+                                   turn_date=date(2026, 2, 5))
+        p = record_group_payout(
+            g, GroupPayout(amount=Decimal('150000'), date=date(2026, 3, 5), member=mine),
+            self.alice)
+        self.assertIsNotNone(p.transaction)
+        self.assertEqual(p.transaction.transaction_type, 'income')
+        self.assertEqual(p.transaction.category.category_type, 'income')
+        mine.refresh_from_db()
+        self.assertEqual(mine.received_on, date(2026, 3, 5))
+        self.assertTrue(mine.has_received)
+        self.assertEqual(g.total_received, Decimal('150000'))
+
+    def test_a_full_pot_is_the_contribution_times_the_members(self):
+        g = self.make_group()
+        self.assertIsNone(g.expected_payout)      # nobody entered yet
+        for i in range(3):
+            GroupMember.objects.create(group=g, name=f'Member {i}', turn_order=i + 1)
+        self.assertEqual(g.member_count, 3)
+        self.assertEqual(g.expected_payout, Decimal('150000'))
+        # A vikoba share-out is not a fixed multiple, so it is not guessed.
+        self.assertIsNone(self.make_group(group_type='vikoba').expected_payout)
+
+    def test_next_turn_skips_members_who_already_collected(self):
+        g = self.make_group()
+        first = GroupMember.objects.create(group=g, name='Asha', turn_order=1,
+                                          turn_date=date(2026, 2, 5))
+        second = GroupMember.objects.create(group=g, name='Juma', turn_order=2,
+                                           turn_date=date(2026, 3, 5))
+        self.assertEqual(g.next_turn, first)
+        first.received_on = date(2026, 2, 5)
+        first.save()
+        self.assertEqual(g.next_turn, second)
+
+    # ---- vikoba loans ----
+
+    def test_a_vikoba_loan_is_a_debt_linked_to_the_group(self):
+        from .services import record_group_loan
+        g = self.make_group(group_type='vikoba')
+        loan = record_group_loan(
+            g, Liability(name='School fees loan', balance=Decimal('300000'),
+                         start_date=date(2026, 2, 10)),
+            self.alice)
+        self.assertEqual(loan.group, g)
+        self.assertEqual(loan.household, self.hh)
+        self.assertEqual(loan.liability_type, 'loan')
+        self.assertEqual(loan.lender, 'Mama Lishe')      # defaults to the group
+        self.assertEqual(loan.original_amount, Decimal('300000'))
+        self.assertEqual(loan.currency, self.tzs)
+        # Shows on the group, and under Debts, where repayments already work.
+        self.assertEqual(list(g.loans.all()), [loan])
+        self.assertEqual(list(self.hh.liabilities.all()), [loan])
+        self.assertEqual(g.outstanding_loans, Decimal('300000'))
+        # Borrowing is not income by default.
+        self.assertFalse(Transaction.objects.exists())
+
+    def test_a_loan_can_also_be_booked_as_cash_in(self):
+        from .services import record_group_loan
+        g = self.make_group(group_type='vikoba')
+        record_group_loan(
+            g, Liability(name='Stock loan', balance=Decimal('200000'),
+                         start_date=date(2026, 2, 10)),
+            self.alice, record_as_income=True)
+        tx = Transaction.objects.get()
+        self.assertEqual(tx.transaction_type, 'income')
+        self.assertIn('Mama Lishe', tx.description)
+
+    def test_repaying_a_vikoba_loan_uses_the_existing_debt_flow(self):
+        from .services import record_group_loan, record_liability_payment
+        g = self.make_group(group_type='vikoba')
+        loan = record_group_loan(
+            g, Liability(name='Loan', balance=Decimal('300000')), self.alice)
+        record_liability_payment(loan, LiabilityPayment(amount=Decimal('100000')),
+                                self.alice, record_as_expense=True)
+        loan.refresh_from_db()
+        self.assertEqual(loan.balance, Decimal('200000'))
+        self.assertEqual(g.outstanding_loans, Decimal('200000'))
+
+    # ---- due dates and reminders ----
+
+    def test_due_dates_step_forward_one_period_at_a_time(self):
+        from .services import record_group_contribution
+        g = self.make_group()
+        # Paying for a date three months late settles that date, not today's.
+        record_group_contribution(
+            g, GroupContribution(amount=Decimal('50000'), date=date(2026, 4, 5)),
+            self.alice, record_as_expense=False)
+        g.refresh_from_db()
+        self.assertEqual(g.next_due_date, date(2026, 5, 5))
+
+    def test_overdue_and_due_soon_reflect_the_collection_date(self):
+        today = timezone.now().date()
+        overdue = self.make_group(next_due_date=(today - timedelta(days=2)).isoformat())
+        self.assertTrue(overdue.is_overdue)
+        self.assertFalse(overdue.is_due_soon)
+        soon = self.make_group(next_due_date=(today + timedelta(days=1)).isoformat())
+        self.assertTrue(soon.is_due_soon)
+        self.assertFalse(soon.is_overdue)
+        # An ended group stops nagging.
+        overdue.is_active = False
+        self.assertFalse(overdue.is_overdue)
+
+    def test_due_alerts_fire_once_per_collection(self):
+        from .services import check_group_due_alerts
+        today = timezone.now().date()
+        self.make_group(next_due_date=(today - timedelta(days=1)).isoformat())
+        created = check_group_due_alerts(self.hh)
+        self.assertEqual(len(created), 1)
+        self.assertEqual(created[0].level, 'warning')      # overdue
+        self.assertIn('Mama Lishe', created[0].title)
+        # Running again the same day does not nag twice.
+        self.assertEqual(check_group_due_alerts(self.hh), [])
+
+    def test_a_group_with_no_collection_date_never_alerts(self):
+        from .services import check_group_due_alerts
+        g = self.make_group()
+        g.next_due_date = None
+        g.save()
+        self.assertEqual(check_group_due_alerts(self.hh), [])
+        self.assertIsNone(g.days_until_due)
+        self.assertFalse(g.is_overdue)
+
+    # ---- web pages ----
+
+    def test_every_group_page_renders(self):
+        c = Client()
+        c.force_login(self.alice)
+        g = self.make_group(group_type='vikoba')
+        GroupMember.objects.create(group=g, name='Us', turn_order=1, is_mine=True)
+        for url in [
+            '/groups/', '/groups/new/', f'/groups/{g.pk}/', f'/groups/{g.pk}/edit/',
+            f'/groups/{g.pk}/delete/', f'/groups/{g.pk}/contribute/',
+            f'/groups/{g.pk}/payout/', f'/groups/{g.pk}/loan/',
+            f'/groups/{g.pk}/members/new/',
+        ]:
+            self.assertEqual(c.get(url).status_code, 200, url)
+        mchezo = self.make_group()
+        self.assertEqual(c.get(f'/groups/{mchezo.pk}/').status_code, 200)
+
+    def test_contributing_through_the_web_can_ask_for_approval(self):
+        c = Client()
+        c.force_login(self.alice)
+        g = self.make_group()
+        res = c.post(f'/groups/{g.pk}/contribute/', {
+            'amount': '50000', 'date': date(2026, 2, 5).isoformat(),
+            'notes': '', 'approver': self.bob.pk})
+        self.assertEqual(res.status_code, 302)
+        self.assertEqual(MoneyRequest.objects.get().approver, self.bob)
+        self.assertTrue(GroupContribution.objects.get().awaiting_approval)
+
+    def test_groups_belonging_to_another_household_are_hidden(self):
+        c = Client()
+        c.force_login(self.alice)
+        other = User.objects.create_user('zara', 'z@example.com', 'pw')
+        theirs = ContributionGroup.objects.create(
+            household=make_household('Theirs', other), name='Not mine',
+            contribution_amount=Decimal('1000'))
+        self.assertEqual(c.get(f'/groups/{theirs.pk}/').status_code, 404)
+
+
+class ContributionGroupAPITests(APITestBase):
+    """The /groups/ endpoints the mobile app uses."""
+
+    def create(self, group_type='mchezo', **kw):
+        body = {'name': 'Mama Lishe', 'group_type': group_type,
+                'contribution_amount': '50000', 'currency': self.tzs.pk,
+                'frequency': 'monthly', 'start_date': '2026-01-05',
+                'next_due_date': '2026-02-05', 'is_active': True, 'notes': ''}
+        body.update(kw)
+        return self.ok(self.a.post('/api/v1/groups/', body, format='json'), 201)
+
+    def test_create_list_and_totals(self):
+        g = self.create(group_type='vikoba')
+        self.assertEqual(g['group_type'], 'vikoba')
+        self.assertEqual(g['contribution_amount'], '50000.00')
+        self.assertEqual(g['currency']['code'], 'TZS')
+        self.assertEqual(g['total_contributed'], '0.00')
+        # A vikoba has no fixed pot.
+        self.assertIsNone(g['expected_payout'])
+
+        index = self.ok(self.a.get('/api/v1/groups/'))
+        self.assertEqual(len(index['groups']), 1)
+        self.assertEqual(index['totals'],
+                         {'contributed': '0.00', 'received': '0.00',
+                          'outstanding_loans': '0.00'})
+
+    def test_contribute_now_or_send_for_approval(self):
+        g = self.create()
+        # Straight to the books.
+        detail = self.ok(self.a.post(f"/api/v1/groups/{g['id']}/contribute/",
+                                     {'amount': '50000', 'date': '2026-02-05'},
+                                     format='json'), 201)
+        self.assertEqual(detail['total_contributed'], '50000.00')
+        self.assertEqual(len(detail['contributions']), 1)
+        self.assertFalse(detail['contributions'][0]['awaiting_approval'])
+        self.assertEqual(detail['next_due_date'], '2026-03-05')
+        self.assertEqual(Transaction.objects.get().transaction_type, 'expense')
+
+        # Or via the partner.
+        detail = self.ok(self.a.post(f"/api/v1/groups/{g['id']}/contribute/",
+                                     {'amount': '50000', 'date': '2026-03-05',
+                                      'approver': self.bob.pk}, format='json'), 201)
+        pending = [c for c in detail['contributions'] if c['awaiting_approval']]
+        self.assertEqual(len(pending), 1)
+        self.assertIsNone(pending[0]['transaction'])
+        # It shows up as a request for Bob to approve.
+        self.assertEqual(self.ok(self.b.get('/api/v1/me/'))['badges']['pending_requests'], 1)
+        req = MoneyRequest.objects.get()
+        self.ok(self.b.post(f'/api/v1/requests/{req.pk}/approve/'))
+        after = self.ok(self.a.get(f"/api/v1/groups/{g['id']}/"))
+        self.assertEqual(after['total_contributed'], '100000.00')
+        self.assertTrue(all(not c['awaiting_approval'] for c in after['contributions']))
+
+    def test_cannot_name_yourself_as_the_approver(self):
+        g = self.create()
+        res = self.a.post(f"/api/v1/groups/{g['id']}/contribute/",
+                          {'amount': '50000', 'date': '2026-02-05',
+                           'approver': self.alice.pk}, format='json')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('approver', res.data)
+
+    def test_members_drive_the_pot_and_the_rotation(self):
+        g = self.create()
+        for i, name in enumerate(['Asha', 'Us', 'Juma']):
+            detail = self.ok(self.a.post(
+                f"/api/v1/groups/{g['id']}/members/",
+                {'name': name, 'turn_order': i + 1,
+                 'turn_date': f'2026-0{i + 2}-05', 'is_mine': name == 'Us'},
+                format='json'), 201)
+        self.assertEqual(detail['member_count'], 3)
+        self.assertEqual(detail['expected_payout'], '150000.00')
+        self.assertEqual(detail['my_turn_date'], '2026-03-05')
+        self.assertEqual(detail['next_turn']['name'], 'Asha')
+
+        # Only one slot can be ours.
+        us = [m for m in detail['members'] if m['is_mine']]
+        self.assertEqual(len(us), 1)
+        juma = [m for m in detail['members'] if m['name'] == 'Juma'][0]
+        detail = self.ok(self.a.patch(
+            f"/api/v1/groups/{g['id']}/members/{juma['id']}/",
+            {'is_mine': True}, format='json'))
+        self.assertEqual([m['name'] for m in detail['members'] if m['is_mine']], ['Juma'])
+
+        detail = self.ok(self.a.delete(
+            f"/api/v1/groups/{g['id']}/members/{juma['id']}/"))
+        self.assertEqual(detail['member_count'], 2)
+
+    def test_a_payout_is_income_and_settles_the_slot(self):
+        g = self.create()
+        detail = self.ok(self.a.post(f"/api/v1/groups/{g['id']}/members/",
+                                     {'name': 'Us', 'turn_order': 1,
+                                      'turn_date': '2026-02-05', 'is_mine': True},
+                                     format='json'), 201)
+        slot = detail['members'][0]['id']
+        detail = self.ok(self.a.post(f"/api/v1/groups/{g['id']}/payouts/",
+                                     {'amount': '150000', 'date': '2026-02-05',
+                                      'member': slot}, format='json'), 201)
+        self.assertEqual(detail['total_received'], '150000.00')
+        self.assertEqual(detail['net_position'], '-150000.00')
+        self.assertTrue(detail['members'][0]['has_received'])
+        self.assertEqual(Transaction.objects.get().transaction_type, 'income')
+
+    def test_a_vikoba_loan_appears_on_the_group_and_under_debts(self):
+        g = self.create(group_type='vikoba')
+        detail = self.ok(self.a.post(f"/api/v1/groups/{g['id']}/loans/",
+                                     {'name': 'School fees', 'balance': '300000',
+                                      'start_date': '2026-02-10'}, format='json'), 201)
+        self.assertEqual(detail['outstanding_loans'], '300000.00')
+        self.assertEqual(len(detail['loans']), 1)
+        self.assertEqual(detail['loans'][0]['lender'], 'Mama Lishe')
+        # Same row, reachable through the debts endpoints.
+        debts = self.ok(self.a.get('/api/v1/debts/'))
+        self.assertEqual([d['id'] for d in debts['results']], [detail['loans'][0]['id']])
+        self.assertEqual(debts['total_balance'], '300000.00')
+        # And repayable there.
+        self.ok(self.a.post(f"/api/v1/debts/{detail['loans'][0]['id']}/payments/",
+                            {'amount': '100000', 'date': '2026-03-01'}, format='json'), 201)
+        self.assertEqual(
+            self.ok(self.a.get(f"/api/v1/groups/{g['id']}/"))['outstanding_loans'],
+            '200000.00')
+
+    def test_update_and_delete_a_group(self):
+        g = self.create()
+        updated = self.ok(self.a.patch(f"/api/v1/groups/{g['id']}/",
+                                       {'name': 'Kikundi Kipya'}, format='json'))
+        self.assertEqual(updated['name'], 'Kikundi Kipya')
+        # PATCH is partial: the rest survives.
+        self.assertEqual(updated['contribution_amount'], '50000.00')
+        self.ok(self.a.delete(f"/api/v1/groups/{g['id']}/"), 204)
+        self.assertFalse(ContributionGroup.objects.exists())
+
+    def test_another_households_group_is_invisible(self):
+        other = User.objects.create_user('zara', 'z@example.com', 'pw')
+        theirs = ContributionGroup.objects.create(
+            household=make_household('Theirs', other), name='Not mine',
+            contribution_amount=Decimal('1000'))
+        self.assertEqual(self.a.get(f'/api/v1/groups/{theirs.pk}/').status_code, 404)
+        self.assertEqual(
+            self.a.post(f'/api/v1/groups/{theirs.pk}/contribute/',
+                        {'amount': '1', 'date': '2026-02-05'}, format='json').status_code,
+            404)
+
+    def test_omitting_a_flag_keeps_the_forms_default_not_false(self):
+        """A bound BooleanField reads a missing key as False and drops its
+        ``initial``, so an omitted flag used to mean the opposite of what the
+        web UI pre-ticks: a payout that never reached the books."""
+        g = self.create()
+        # Omitted: income is recorded, as the web form's ticked box would.
+        self.ok(self.a.post(f"/api/v1/groups/{g['id']}/payouts/",
+                            {'amount': '150000', 'date': '2026-02-05'},
+                            format='json'), 201)
+        self.assertEqual(Transaction.objects.count(), 1)
+        # Explicitly off: honoured.
+        self.ok(self.a.post(f"/api/v1/groups/{g['id']}/payouts/",
+                            {'amount': '150000', 'date': '2026-03-05',
+                             'record_as_income': False}, format='json'), 201)
+        self.assertEqual(Transaction.objects.count(), 1)
+        # And the other way round for a loan, which defaults off.
+        v = self.create(group_type='vikoba', name='Vikoba')
+        self.ok(self.a.post(f"/api/v1/groups/{v['id']}/loans/",
+                            {'name': 'L1', 'balance': '1000'}, format='json'), 201)
+        self.assertEqual(Transaction.objects.count(), 1)
+        self.ok(self.a.post(f"/api/v1/groups/{v['id']}/loans/",
+                            {'name': 'L2', 'balance': '1000',
+                             'record_as_income': 'true'}, format='json'), 201)
+        self.assertEqual(Transaction.objects.count(), 2)
+
+    def test_a_bad_collection_date_is_rejected_per_field(self):
+        res = self.a.post('/api/v1/groups/', {
+            'name': 'Backwards', 'group_type': 'mchezo',
+            'contribution_amount': '1000', 'frequency': 'monthly',
+            'start_date': '2026-06-01', 'next_due_date': '2026-01-01'}, format='json')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('next_due_date', res.data)

@@ -118,6 +118,28 @@ Settings read from the environment, falling back to dev-friendly defaults so
 Local development still uses SQLite with zero configuration — set `DATABASE_URL`
 only where you want Postgres.
 
+## Vikoba & Mchezo
+
+Two kinds of Tanzanian savings group, at `/groups/`:
+
+- **Vikoba** — savings you can borrow against. Contributions go out, a share-out
+  comes back in, and a loan from the pool is recorded as an ordinary
+  **debt linked to the group**, so it shows on the group page and under Debts
+  with the existing repayment screens. No duplicate loan model.
+- **Mchezo** — a rotating pot: everyone pays in on the agreed date and one
+  member collects the lot, turn by turn. The rotation is stored, so the app
+  knows what a full pot is worth (contribution × members), whose turn is next,
+  and when yours falls.
+
+A contribution can be recorded directly as an expense, or sent to your partner
+through the **money-request** flow — then nothing hits the books until they
+approve, and the approval is what creates the expense. Money collected from
+either kind of group comes in as **income**.
+
+Collection dates are reminders, not automation: `check_group_due_alerts` raises
+one alert per collection date when it is within three days or overdue, and the
+date steps forward as contributions are recorded.
+
 ## Mobile API
 
 The Flutter app in `../mobile` talks to a token-authenticated JSON API under
@@ -131,13 +153,19 @@ python manage.py test budget_app     # includes tests_api.py
 
 ### Push notifications
 
-`/ws/notify/` only reaches an app that is open, so money requests, approvals and
-chat messages are *also* sent through Firebase Cloud Messaging
-(`budget_app/push.py`) to the device tokens the app registers at
-`POST /api/v1/devices/`. That is what makes a notification pop up on the phone
-while the app is closed.
+`/ws/notify/` only reaches an app that is open, so events that should interrupt
+someone also carry a `notification: {title, body, thread_id, exclude_user_id}`
+block, and are sent through Firebase as well.
 
-To turn it on:
+How each platform gets them while the app is closed:
+
+- **Android needs nothing from this section.** The app keeps the same
+  `/ws/notify/` socket open in a foreground service and raises its own
+  notifications from that block, so delivery never leaves this server. See
+  `../mobile/README.md`.
+- **iOS needs Firebase**, because only APNs can wake a closed app there.
+
+To turn on the Firebase half (iOS, or Android if you prefer it):
 
 1. In the [Firebase console](https://console.firebase.google.com/), create a
    project and add an Android app with package name
@@ -151,8 +179,8 @@ To turn it on:
 4. Build the app with the matching `google-services.json` — see
    `../mobile/README.md`.
 
-Without `FCM_CREDENTIALS_FILE` everything else works exactly as before; the push
-calls become no-ops. Delivery happens on a background thread, so a slow or
+Without `FCM_CREDENTIALS_FILE` everything else works exactly as before; the
+Firebase calls become no-ops and Android is unaffected. Delivery happens on a background thread, so a slow or
 unreachable Firebase never delays a request, and tokens Firebase reports as
 unregistered are deleted automatically.
 

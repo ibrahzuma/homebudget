@@ -33,7 +33,17 @@ def push_to_household(household, payload, notify=None, exclude_user=None):
     """
     if not household:
         return
-    _push_websocket(household, payload)
+    ws_payload = payload
+    if notify:
+        # Carried over the socket too, for the Android foreground service: it
+        # raises the notification itself from this text rather than re-deriving
+        # strings the server has already composed. `exclude_user_id` lets it
+        # apply the same "not the person who caused it" rule as the FCM half.
+        ws_payload = payload | {'notification': dict(
+            notify,
+            exclude_user_id=getattr(exclude_user, 'pk', exclude_user),
+        )}
+    _push_websocket(household, ws_payload)
     if notify:
         _push_devices(household, payload, notify, exclude_user)
 
@@ -88,6 +98,7 @@ from .models import (
     CategoryRule, Liability, NetWorthSnapshot, ExchangeRate,
     Meeting, AgreementItem, Category, Currency, MoneyRequest, Goal,
     Receivable, ChatMessage, ChatReadState,
+    ContributionGroup, GroupContribution, GroupMember, GroupPayout,
 )
 
 
@@ -541,6 +552,7 @@ def run_daily_household_tasks(household):
     apply_due_recurring(household=household)
     check_budget_alerts(household)
     check_upcoming_meeting_alerts(household)
+    check_group_due_alerts(household)
 
 
 # -------- money requests --------
@@ -599,6 +611,14 @@ def approve_money_request(money_request, note=''):
         money_request.income_transaction = None
         money_request.expense_transaction = expense_t
         money_request.save()
+        # A contribution that waited on approval gets the expense that was just
+        # created, and the group's due date moves on — the same bookkeeping
+        # record_group_contribution does when no approval was needed.
+        pending = money_request.group_contribution_for.first()
+        if pending and pending.transaction is None:
+            pending.transaction = expense_t
+            pending.save(update_fields=['transaction'])
+            advance_group_due_date(pending.group, paid_for=pending.date)
         Alert.objects.create(
             household=household, user=money_request.requester,
             title=f"Request approved by {approver.username}",
@@ -969,6 +989,219 @@ def mobile_app_release():
         'size_mb': round(stat.st_size / (1024 * 1024), 1),
         'built_at': timezone.localtime(built),
         'version': settings.APK_VERSION,
+    }
+
+
+# -------- contribution groups (vikoba / mchezo) --------
+
+def _group_category(household, outgoing):
+    """The category group money lands in, created on first use.
+
+    One pair for every group, so a year of vikoba and mchezo payments reads as
+    one line in the reports rather than one per group.
+    """
+    if outgoing:
+        return Category.objects.get_or_create(
+            household=household, name='Vikoba & Mchezo',
+            category_type=Category.EXPENSE,
+            defaults={'color': '#6f42c1', 'icon': 'bi-people-fill'},
+        )[0]
+    return Category.objects.get_or_create(
+        household=household, name='Vikoba & Mchezo',
+        category_type=Category.INCOME,
+        defaults={'color': '#6f42c1', 'icon': 'bi-people-fill'},
+    )[0]
+
+
+def record_group_contribution(group, contribution, user, record_as_expense=True):
+    """Save a contribution (unsaved) the household paid in directly.
+
+    Use this when the money has already gone out. When the partner should
+    approve it first, use :func:`request_group_contribution` instead — that
+    records the expense only once they say yes.
+    """
+    household = group.household
+    with db_transaction.atomic():
+        contribution.group = group
+        contribution.user = user
+        if not contribution.currency:
+            contribution.currency = group.currency or household.base_currency
+        if record_as_expense:
+            contribution.transaction = Transaction.objects.create(
+                household=household, user=user,
+                category=_group_category(household, outgoing=True),
+                transaction_type=Transaction.EXPENSE,
+                amount=contribution.amount,
+                currency=contribution.currency,
+                description=f"Contribution to {group.name}",
+                payee=group.name, date=contribution.date,
+                source=Transaction.SOURCE_MANUAL,
+            )
+        contribution.save()
+        advance_group_due_date(group, paid_for=contribution.date)
+    return contribution
+
+
+def request_group_contribution(group, contribution, user, approver):
+    """Ask the partner to approve a contribution before it is paid.
+
+    Creates the pending :class:`MoneyRequest` and the contribution row that
+    points at it; the expense itself appears when the request is approved, via
+    :func:`approve_money_request`. Returns the request.
+    """
+    household = group.household
+    with db_transaction.atomic():
+        contribution.group = group
+        contribution.user = user
+        if not contribution.currency:
+            contribution.currency = group.currency or household.base_currency
+        request = MoneyRequest.objects.create(
+            household=household, requester=user, approver=approver,
+            amount=contribution.amount, currency=contribution.currency,
+            category=_group_category(household, outgoing=True),
+            purpose=f"{group.get_group_type_display().split(' (')[0]} contribution: {group.name}",
+            notes=contribution.notes,
+        )
+        contribution.money_request = request
+        contribution.save()
+    notify_money_request_created(request)
+    return request
+
+
+def record_group_payout(group, payout, user, record_as_income=True):
+    """Save money received from the group (a mchezo turn or vikoba share-out).
+
+    Marks the rotation slot as taken when one is named, so the group can show
+    whose turn is next.
+    """
+    household = group.household
+    with db_transaction.atomic():
+        payout.group = group
+        payout.user = user
+        if not payout.currency:
+            payout.currency = group.currency or household.base_currency
+        if record_as_income:
+            payout.transaction = Transaction.objects.create(
+                household=household, user=user,
+                category=_group_category(household, outgoing=False),
+                transaction_type=Transaction.INCOME,
+                amount=payout.amount,
+                currency=payout.currency,
+                description=f"Received from {group.name}",
+                payee=group.name, date=payout.date,
+                source=Transaction.SOURCE_MANUAL,
+            )
+        payout.save()
+        if payout.member and not payout.member.received_on:
+            payout.member.received_on = payout.date
+            payout.member.save(update_fields=['received_on'])
+    return payout
+
+
+def record_group_loan(group, liability, user, record_as_income=False):
+    """Save a loan taken from a vikoba as an ordinary debt tied to the group.
+
+    It lands in ``Liability``, so it shows up under Debts and repayments work
+    exactly as they do for any other loan. Borrowing is not income — it is cash
+    in against a debt — so ``record_as_income`` is off unless the caller wants
+    the money landing in the month's figures.
+    """
+    household = group.household
+    with db_transaction.atomic():
+        liability.household = household
+        liability.group = group
+        if not liability.currency:
+            liability.currency = group.currency or household.base_currency
+        if not liability.liability_type:
+            liability.liability_type = Liability.TYPE_LOAN
+        if not liability.lender:
+            liability.lender = group.name
+        if not liability.original_amount:
+            liability.original_amount = liability.balance
+        liability.save()
+        if record_as_income:
+            Transaction.objects.create(
+                household=household, user=user,
+                category=_group_category(household, outgoing=False),
+                transaction_type=Transaction.INCOME,
+                amount=liability.balance,
+                currency=liability.currency,
+                description=f"Loan from {group.name}",
+                payee=group.name,
+                date=liability.start_date or timezone.now().date(),
+                source=Transaction.SOURCE_MANUAL,
+            )
+    return liability
+
+
+def advance_group_due_date(group, paid_for=None):
+    """Move the group's next collection date past the one just paid.
+
+    Steps rather than jumping straight to today+frequency so a run of late
+    contributions each settle the date they were for. Capped so a stale date
+    years back cannot spin.
+    """
+    if not group.next_due_date:
+        return group
+    paid_for = paid_for or group.next_due_date
+    due = group.next_due_date
+    for _ in range(60):
+        if due > paid_for:
+            break
+        nxt = group.advance_due_date(due)
+        if not nxt or nxt <= due:
+            break
+        due = nxt
+    if due != group.next_due_date:
+        group.next_due_date = due
+        group.save(update_fields=['next_due_date'])
+    return group
+
+
+def check_group_due_alerts(household, today=None, days_ahead=3):
+    """Alert when a group's collection date is near or past.
+
+    Deduped on ``link_url`` plus the date, so each collection nags once.
+    """
+    today = today or timezone.now().date()
+    cutoff = today + timedelta(days=days_ahead)
+    created = []
+    groups = household.contribution_groups.filter(
+        is_active=True, next_due_date__isnull=False, next_due_date__lte=cutoff)
+    for g in groups:
+        link = f"/groups/{g.pk}/?due={g.next_due_date.isoformat()}"
+        if Alert.objects.filter(household=household, link_url=link).exists():
+            continue
+        overdue = g.next_due_date < today
+        days = (g.next_due_date - today).days
+        when = ('was due ' + g.next_due_date.strftime('%b %d') if overdue
+                else 'is due today' if days == 0
+                else 'is due tomorrow' if days == 1
+                else f'is due in {days} days')
+        symbol = g.currency.symbol if g.currency else household.currency_symbol
+        created.append(Alert.objects.create(
+            household=household,
+            title=f"{g.name} contribution {'overdue' if overdue else 'due'}",
+            message=f"Your {symbol}{g.contribution_amount} contribution to "
+                    f"{g.name} {when}.",
+            level=Alert.LEVEL_WARNING if overdue else Alert.LEVEL_INFO,
+            link_url=link,
+        ))
+    return created
+
+
+def group_summary(household):
+    """Totals for the groups index page, shared by the web and the API."""
+    groups = list(household.contribution_groups.select_related('currency')
+                  .prefetch_related('members', 'loans'))
+    return {
+        'groups': groups,
+        'vikoba': [g for g in groups if g.is_vikoba],
+        'mchezo': [g for g in groups if g.is_mchezo],
+        'total_contributed': sum((g.total_contributed for g in groups), Decimal('0')),
+        'total_received': sum((g.total_received for g in groups), Decimal('0')),
+        'outstanding_loans': sum((g.outstanding_loans for g in groups), Decimal('0')),
+        'due_soon': [g for g in groups if g.is_due_soon or g.is_overdue],
     }
 
 

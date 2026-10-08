@@ -921,3 +921,165 @@ class MonthlyReport {
 
 /// Parses a decimal string from a nested JSON map (for MonthlyReport maps).
 double money(dynamic v) => _d0(v);
+
+/// One slot in a mchezo rotation: who collects, and when.
+class GroupMember {
+  GroupMember.fromJson(Map<String, dynamic> j)
+      : id = j['id'] as int,
+        name = j['name'] as String,
+        turnOrder = j['turn_order'] as int? ?? 1,
+        turnDate = _date(j['turn_date']),
+        isMine = j['is_mine'] as bool? ?? false,
+        receivedOn = _date(j['received_on']),
+        hasReceived = j['has_received'] as bool? ?? false,
+        phone = j['phone'] as String? ?? '',
+        notes = j['notes'] as String? ?? '';
+  final int id;
+  final String name;
+  final int turnOrder;
+  final DateTime? turnDate;
+  final bool isMine;
+  final DateTime? receivedOn;
+  final bool hasReceived;
+  final String phone;
+  final String notes;
+}
+
+/// Money the household paid into a group.
+class GroupContribution {
+  GroupContribution.fromJson(Map<String, dynamic> j)
+      : id = j['id'] as int,
+        date = _date(j['date'])!,
+        amount = _d0(j['amount']),
+        currency = _opt(j['currency'], Currency.fromJson),
+        user = _opt(j['user'], UserBrief.fromJson),
+        notes = j['notes'] as String? ?? '',
+        transactionId = j['transaction'] as int?,
+        moneyRequestId = j['money_request'] as int?,
+        awaitingApproval = j['awaiting_approval'] as bool? ?? false;
+  final int id;
+  final DateTime date;
+  final double amount;
+  final Currency? currency;
+  final UserBrief? user;
+  final String notes;
+  final int? transactionId;
+  final int? moneyRequestId;
+
+  /// Sent to the partner and not yet answered — no expense recorded yet.
+  final bool awaitingApproval;
+}
+
+/// Money the household collected from a group: a mchezo turn or a share-out.
+class GroupPayout {
+  GroupPayout.fromJson(Map<String, dynamic> j)
+      : id = j['id'] as int,
+        date = _date(j['date'])!,
+        amount = _d0(j['amount']),
+        currency = _opt(j['currency'], Currency.fromJson),
+        user = _opt(j['user'], UserBrief.fromJson),
+        memberId = j['member'] as int?,
+        notes = j['notes'] as String? ?? '',
+        transactionId = j['transaction'] as int?;
+  final int id;
+  final DateTime date;
+  final double amount;
+  final Currency? currency;
+  final UserBrief? user;
+  final int? memberId;
+  final String notes;
+  final int? transactionId;
+}
+
+/// A vikoba (savings group you can borrow from) or a mchezo (rotating pot).
+///
+/// Lists carry the summary fields only; [members], [contributions], [payouts]
+/// and [loans] are filled in by the detail endpoint.
+class ContributionGroup {
+  ContributionGroup.fromJson(Map<String, dynamic> j)
+      : id = j['id'] as int,
+        name = j['name'] as String,
+        groupType = j['group_type'] as String,
+        groupTypeDisplay = j['group_type_display'] as String? ?? '',
+        contributionAmount = _d0(j['contribution_amount']),
+        currency = _opt(j['currency'], Currency.fromJson),
+        frequency = j['frequency'] as String? ?? 'monthly',
+        frequencyDisplay = j['frequency_display'] as String? ?? '',
+        startDate = _date(j['start_date']),
+        nextDueDate = _date(j['next_due_date']),
+        daysUntilDue = j['days_until_due'] as int?,
+        isDueSoon = j['is_due_soon'] as bool? ?? false,
+        isOverdue = j['is_overdue'] as bool? ?? false,
+        isActive = j['is_active'] as bool? ?? true,
+        icon = j['icon'] as String? ?? 'bi-people-fill',
+        color = j['color'] as String? ?? '#6f42c1',
+        notes = j['notes'] as String? ?? '',
+        totalContributed = _d0(j['total_contributed']),
+        totalReceived = _d0(j['total_received']),
+        netPosition = _d0(j['net_position']),
+        outstandingLoans = _d0(j['outstanding_loans']),
+        memberCount = j['member_count'] as int? ?? 0,
+        expectedPayout = _d(j['expected_payout']),
+        myTurnDate = _date(j['my_turn_date']),
+        nextTurn = _opt(j['next_turn'], GroupMember.fromJson),
+        members = _list(j['members'], GroupMember.fromJson),
+        contributions = _list(j['contributions'], GroupContribution.fromJson),
+        payouts = _list(j['payouts'], GroupPayout.fromJson),
+        loans = _list(j['loans'], Liability.fromJson),
+        raw = j;
+
+  final int id;
+  final String name;
+  final String groupType;
+  final String groupTypeDisplay;
+  final double contributionAmount;
+  final Currency? currency;
+  final String frequency;
+  final String frequencyDisplay;
+  final DateTime? startDate;
+  final DateTime? nextDueDate;
+  final int? daysUntilDue;
+  final bool isDueSoon;
+  final bool isOverdue;
+  final bool isActive;
+  final String icon;
+  final String color;
+  final String notes;
+  final double totalContributed;
+  final double totalReceived;
+  final double netPosition;
+  final double outstandingLoans;
+  final int memberCount;
+
+  /// What one full mchezo pot collects. Null for a vikoba, and until the
+  /// rotation has been entered.
+  final double? expectedPayout;
+  final DateTime? myTurnDate;
+  final GroupMember? nextTurn;
+  final List<GroupMember> members;
+  final List<GroupContribution> contributions;
+  final List<GroupPayout> payouts;
+  final List<Liability> loans;
+  final Map<String, dynamic> raw;
+
+  bool get isMchezo => groupType == 'mchezo';
+  bool get isVikoba => groupType == 'vikoba';
+  GroupMember? get myMember =>
+      members.where((m) => m.isMine).cast<GroupMember?>().firstOrNull;
+}
+
+/// The groups index: the list plus household totals.
+class GroupIndex {
+  GroupIndex.fromJson(Map<String, dynamic> j)
+      : groups = _list(j['groups'], ContributionGroup.fromJson),
+        contributed = _d0((j['totals'] as Map<String, dynamic>?)?['contributed']),
+        received = _d0((j['totals'] as Map<String, dynamic>?)?['received']),
+        outstandingLoans =
+            _d0((j['totals'] as Map<String, dynamic>?)?['outstanding_loans']),
+        dueSoonIds = ((j['due_soon'] as List?) ?? const []).cast<int>();
+  final List<ContributionGroup> groups;
+  final double contributed;
+  final double received;
+  final double outstandingLoans;
+  final List<int> dueSoonIds;
+}

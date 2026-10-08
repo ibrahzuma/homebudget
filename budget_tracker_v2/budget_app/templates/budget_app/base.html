@@ -469,6 +469,9 @@
         <a href="{% url 'goal_list' %}" class="sidebar-link {% if 'goal' in request.resolver_match.url_name %}active{% endif %}">
             <i class="bi bi-piggy-bank"></i> Savings Goals
         </a>
+        <a href="{% url 'group_list' %}" class="sidebar-link {% if 'group' in request.resolver_match.url_name %}active{% endif %}">
+            <i class="bi bi-people-fill"></i> Vikoba &amp; Mchezo
+        </a>
         <a href="{% url 'project_list' %}" class="sidebar-link {% if 'project' in request.resolver_match.url_name %}active{% endif %}">
             <i class="bi bi-bookmark-star"></i> Projects
         </a>

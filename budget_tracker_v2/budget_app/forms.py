@@ -7,6 +7,7 @@ from .models import (
     CategoryRule, Asset, Liability, LiabilityPayment, MoneyRequest, Currency,
     Meeting, AgreementItem, Goal, GoalContribution, Project,
     Receivable, ReceivablePayment,
+    ContributionGroup, GroupMember, GroupContribution, GroupPayout,
 )
 
 
@@ -396,3 +397,126 @@ class ProjectForm(BootstrapMixin, forms.ModelForm):
         super().__init__(*args, **kwargs)
         if household and household.base_currency and not self.initial.get('currency'):
             self.fields['currency'].initial = household.base_currency
+
+
+# ============================================================
+# CONTRIBUTION GROUPS (vikoba / mchezo)
+# ============================================================
+
+class ContributionGroupForm(BootstrapMixin, forms.ModelForm):
+    class Meta:
+        model = ContributionGroup
+        fields = ('name', 'group_type', 'contribution_amount', 'currency',
+                  'frequency', 'start_date', 'next_due_date', 'is_active', 'notes')
+        widgets = {
+            'name': forms.TextInput(attrs={'placeholder': 'e.g. Mama Lishe Vikoba'}),
+            'start_date': forms.DateInput(attrs={'type': 'date'}),
+            'next_due_date': forms.DateInput(attrs={'type': 'date'}),
+            'notes': forms.Textarea(attrs={'rows': 2}),
+        }
+        help_texts = {
+            'next_due_date': 'The next agreed collection date. Leave blank for no reminders.',
+        }
+
+    def clean(self):
+        data = super().clean()
+        start, due = data.get('start_date'), data.get('next_due_date')
+        if start and due and due < start:
+            self.add_error('next_due_date', "The next collection can't be before the group started.")
+        return data
+
+
+class GroupMemberForm(BootstrapMixin, forms.ModelForm):
+    """One slot in the rotation. ``is_mine`` marks the household's own turn."""
+
+    class Meta:
+        model = GroupMember
+        fields = ('name', 'turn_order', 'turn_date', 'is_mine', 'phone', 'notes')
+        widgets = {
+            'name': forms.TextInput(attrs={'placeholder': "Member's name"}),
+            'turn_date': forms.DateInput(attrs={'type': 'date'}),
+            'notes': forms.Textarea(attrs={'rows': 2}),
+        }
+        labels = {'is_mine': "This is our household's turn"}
+        help_texts = {'turn_order': '1 = first to receive the pot.'}
+
+
+class GroupContributionForm(BootstrapMixin, forms.ModelForm):
+    """Pay into the group, either straight away or once the partner approves.
+
+    The approver choices are narrowed to the other household members by the
+    view/API, which is also what decides whether approval is offered at all.
+    """
+    approver = forms.ModelChoiceField(
+        queryset=User.objects.none(), required=False,
+        label='Ask for approval from',
+        help_text='Leave blank to record it now. Choose a partner to send it for '
+                  'approval instead — the expense is recorded when they approve.',
+    )
+
+    class Meta:
+        model = GroupContribution
+        fields = ('amount', 'date', 'notes')
+        widgets = {
+            'date': forms.DateInput(attrs={'type': 'date'}),
+            'notes': forms.Textarea(attrs={'rows': 2}),
+        }
+
+    def __init__(self, *args, household=None, exclude_user=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if household is not None:
+            members = household.members.all()
+            if exclude_user is not None:
+                members = members.exclude(pk=exclude_user.pk)
+            self.fields['approver'].queryset = members
+        if not self.fields['approver'].queryset.exists():
+            # Nobody to approve it; don't show a dead control.
+            del self.fields['approver']
+
+
+class GroupPayoutForm(BootstrapMixin, forms.ModelForm):
+    record_as_income = forms.BooleanField(
+        required=False, initial=True,
+        label='Record this as household income',
+        help_text='Money collected from the group counts as income coming in.',
+    )
+
+    class Meta:
+        model = GroupPayout
+        fields = ('amount', 'date', 'member', 'notes')
+        widgets = {
+            'date': forms.DateInput(attrs={'type': 'date'}),
+            'notes': forms.Textarea(attrs={'rows': 2}),
+        }
+        labels = {'member': 'Rotation slot this settles'}
+
+    def __init__(self, *args, group=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if group is not None:
+            self.fields['member'].queryset = group.members.all()
+            self.fields['member'].required = False
+            if not group.is_mchezo:
+                del self.fields['member']     # a vikoba share-out has no rotation
+
+
+class GroupLoanForm(BootstrapMixin, forms.ModelForm):
+    """A loan taken from a vikoba. Saved as a Liability, so it also appears
+    under Debts and uses the existing repayment flow."""
+    record_as_income = forms.BooleanField(
+        required=False, initial=False,
+        label='Also record the cash received as income',
+        help_text='Borrowing is not really income, so this is usually left off — '
+                  'the debt itself is what gets tracked.',
+    )
+
+    class Meta:
+        model = Liability
+        fields = ('name', 'balance', 'original_amount', 'currency',
+                  'interest_rate', 'start_date', 'due_date', 'notes')
+        widgets = {
+            'name': forms.TextInput(attrs={'placeholder': 'e.g. Vikoba loan — school fees'}),
+            'start_date': forms.DateInput(attrs={'type': 'date'}),
+            'due_date': forms.DateInput(attrs={'type': 'date'}),
+            'notes': forms.Textarea(attrs={'rows': 2}),
+        }
+        labels = {'balance': 'Amount still owed', 'original_amount': 'Amount borrowed'}

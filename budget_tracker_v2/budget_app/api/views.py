@@ -28,10 +28,13 @@ from ..forms import (
     LiabilityForm, LiabilityPaymentForm, MeetingForm, MoneyRequestForm,
     ProjectForm, ReceivableForm, ReceivablePaymentForm, RecurringTransactionForm,
     SignUpForm, TransactionForm,
+    ContributionGroupForm, GroupMemberForm, GroupContributionForm,
+    GroupPayoutForm, GroupLoanForm,
 )
 from ..models import (
-    AgreementItem, Alert, Asset, Budget, Category, CategoryRule, Currency,
-    DeviceToken, ExchangeRate, Goal, GoalContribution, HouseholdInvitation, Liability,
+    AgreementItem, Alert, Asset, Budget, Category, CategoryRule,
+    ContributionGroup, Currency, DeviceToken, ExchangeRate, Goal, GoalContribution,
+    GroupMember, HouseholdInvitation, Liability,
     LiabilityPayment, Meeting, MoneyRequest, Project, Receivable,
     ReceivablePayment, RecurringTransaction, Transaction,
 )
@@ -57,6 +60,23 @@ def _data(request):
     """Mutable plain-dict copy of the request body."""
     d = request.data
     return d.dict() if hasattr(d, 'dict') else dict(d)
+
+
+_TRUTHY = (True, 1, 'true', 'True', '1', 'yes', 'on')
+
+
+def _flag(request, name, default):
+    """A checkbox-style option from JSON, honouring the form's default.
+
+    A bound Django form reads a missing BooleanField as False and ignores its
+    ``initial``, so an API client that simply omits the key would silently get
+    the opposite of what the web UI pre-ticks. An absent key keeps ``default``;
+    an explicit value wins.
+    """
+    if name not in request.data:
+        return default
+    value = request.data.get(name)
+    return value if isinstance(value, bool) else value in _TRUTHY
 
 
 def _token_response(user, http_status=status.HTTP_200_OK):
@@ -1172,3 +1192,128 @@ class AgreementQuickUpdateView(AgreementDetailView):
             request.data.get('status'), request.data.get('progress'),
         )
         return Response(s.agreement(item))
+
+
+# ============================================================
+# CONTRIBUTION GROUPS (vikoba / mchezo)
+# ============================================================
+
+def _group_detail(g):
+    return s.contribution_group(g, detail=True)
+
+
+class ContributionGroupListView(_DefaultCurrencyMixin, CrudListView):
+    model = ContributionGroup
+    form_class = ContributionGroupForm
+    serialize = staticmethod(s.contribution_group)
+    pass_household_to_form = False
+
+    def get_queryset(self):
+        return (self.household.contribution_groups
+                .select_related('currency').prefetch_related('members', 'loans'))
+
+    def get(self, request):
+        """Totals alongside the list, so the index needs one call."""
+        data = services.group_summary(self.household)
+        return Response({
+            'groups': [s.contribution_group(g) for g in data['groups']],
+            'totals': {
+                'contributed': s.money(data['total_contributed']),
+                'received': s.money(data['total_received']),
+                'outstanding_loans': s.money(data['outstanding_loans']),
+            },
+            'due_soon': [g.id for g in data['due_soon']],
+        })
+
+
+class ContributionGroupDetailView(CrudDetailView):
+    model = ContributionGroup
+    form_class = ContributionGroupForm
+    serialize = staticmethod(_group_detail)
+    pass_household_to_form = False
+
+
+class GroupContributeView(HouseholdAPIView):
+    """Pay into the group.
+
+    Pass ``approver`` to send it for approval instead of recording it now; the
+    expense is then created when the request is approved, exactly as on the web.
+    """
+
+    def post(self, request, pk):
+        group = self.get_owned(ContributionGroup, pk)
+        form = validated_form(GroupContributionForm, request.data,
+                              household=self.household, exclude_user=request.user)
+        contribution = form.save(commit=False)
+        approver = form.cleaned_data.get('approver')
+        if approver:
+            services.request_group_contribution(group, contribution, request.user, approver)
+        else:
+            services.record_group_contribution(group, contribution, request.user)
+        group.refresh_from_db()
+        return created(_group_detail(group))
+
+
+class GroupPayoutCreateView(HouseholdAPIView):
+    """Record money collected from the group. Comes in as income."""
+
+    def post(self, request, pk):
+        group = self.get_owned(ContributionGroup, pk)
+        form = validated_form(GroupPayoutForm, request.data, group=group)
+        services.record_group_payout(
+            group, form.save(commit=False), request.user,
+            record_as_income=_flag(request, 'record_as_income', True))
+        group.refresh_from_db()
+        return created(_group_detail(group))
+
+
+class GroupLoanCreateView(HouseholdAPIView):
+    """Record a loan taken from a vikoba. Saved as a debt under /debts/ too."""
+
+    def post(self, request, pk):
+        group = self.get_owned(ContributionGroup, pk)
+        form = validated_form(GroupLoanForm, request.data)
+        services.record_group_loan(
+            group, form.save(commit=False), request.user,
+            record_as_income=_flag(request, 'record_as_income', False))
+        group.refresh_from_db()
+        return created(_group_detail(group))
+
+
+class GroupMemberListView(HouseholdAPIView):
+    def post(self, request, pk):
+        group = self.get_owned(ContributionGroup, pk)
+        form = validated_form(GroupMemberForm, request.data)
+        member = form.save(commit=False)
+        member.group = group
+        member.save()
+        _only_one_mine(group, member)
+        return created(_group_detail(group))
+
+
+class GroupMemberDetailView(HouseholdAPIView):
+    def _member(self, pk, member_pk):
+        group = self.get_owned(ContributionGroup, pk)
+        member = GroupMember.objects.filter(pk=member_pk, group=group).first()
+        if member is None:
+            raise NotFound()
+        return group, member
+
+    def patch(self, request, pk, member_pk):
+        group, member = self._member(pk, member_pk)
+        form = validated_form(GroupMemberForm, request.data, instance=member)
+        _only_one_mine(group, form.save())
+        group.refresh_from_db()
+        return Response(_group_detail(group))
+
+    def delete(self, request, pk, member_pk):
+        group, member = self._member(pk, member_pk)
+        member.delete()
+        group.refresh_from_db()
+        return Response(_group_detail(group))
+
+
+def _only_one_mine(group, member):
+    """Just one slot in the rotation can be the household's own turn."""
+    if member.is_mine:
+        group.members.exclude(pk=member.pk).filter(is_mine=True).update(is_mine=False)

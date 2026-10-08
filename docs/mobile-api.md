@@ -79,6 +79,13 @@ process as the web UI (`budget_tracker_v2/budget_app/api/`).
 | POST | `currencies/rates/` | `{from_currency, to_currency, rate}`. Recomputes base amounts |
 | GET | `reports/monthly/?year=&month=` | Full monthly report |
 | GET | `reports/monthly/<y>/<m>/csv/` | CSV |
+| GET / POST | `groups/` | Vikoba & mchezo. GET → `{groups[], totals{contributed,received,outstanding_loans}, due_soon[ids]}`. POST `{name, group_type, contribution_amount, currency?, frequency, start_date, next_due_date?, is_active?, notes?}` |
+| GET / PATCH / DELETE | `groups/<id>/` | Detail adds `members`, `contributions`, `payouts`, `loans` |
+| POST | `groups/<id>/contribute/` | `{amount, date, notes?, approver?}`. With `approver` it creates a pending money request and records nothing until approved; without, it records the expense now |
+| POST | `groups/<id>/payouts/` | `{amount, date, member?, notes?, record_as_income?}` → income. Marks that rotation slot collected |
+| POST | `groups/<id>/loans/` | `{name, balance, original_amount?, currency?, interest_rate?, start_date?, due_date?, notes?, record_as_income?}` → a `Liability` tied to the group, also under `debts/` |
+| POST | `groups/<id>/members/` | `{name, turn_order, turn_date?, is_mine?, phone?, notes?}` |
+| PATCH / DELETE | `groups/<id>/members/<mid>/` | Member responses return the whole group |
 | GET / POST | `chat/` | GET `?limit=50&before=<id>&after=<id>` → `{results[] oldest-first, has_more}`. Loading the latest page marks the chat read. POST `{body}` |
 | POST | `chat/read/` | |
 | GET / POST | `meetings/` | GET → `{results[], open_count, overdue_count, next_suggested_date, next_suggested_title}`. POST: `participants` defaults to all members, `carry_over_open_items` defaults to true |
@@ -86,6 +93,37 @@ process as the web UI (`budget_tracker_v2/budget_app/api/`).
 | POST | `meetings/<id>/items/` | Agreement item |
 | PATCH / DELETE | `meetings/<id>/items/<iid>/` | |
 | POST | `meetings/<id>/items/<iid>/quick/` | `{status?, progress?}` |
+
+## Contribution groups (vikoba & mchezo)
+
+Two Tanzanian savings-group shapes, both under `groups/` with a `group_type`:
+
+- **vikoba** — a pool of savings members can borrow from. A loan is a real debt,
+  so it is stored as a `Liability` with its `group` set: it appears on the group
+  *and* under `debts/`, where repayments work unchanged. There is no separate
+  loan model or repayment endpoint.
+- **mchezo** — a rotating pot. Everyone pays in on an agreed date and one member
+  takes the lot, turn by turn. `members` holds the rotation, so
+  `expected_payout` (contribution × members), `my_turn_date` and `next_turn` can
+  be worked out; only the household's own money becomes transactions.
+
+Money in and out:
+
+| | Becomes | Notes |
+|---|---|---|
+| `contribute/` without `approver` | an expense | `next_due_date` steps forward |
+| `contribute/` with `approver` | a pending money request | the expense appears on approval, and `awaiting_approval` is true until then |
+| `payouts/` | income | settles a rotation slot |
+| `loans/` | a debt | not income by default — borrowing is cash against a debt |
+
+`record_as_income` and `record_as_expense` are checkbox-style: **omit the key and
+the endpoint's documented default applies** (on for a payout, off for a loan).
+A bound Django form reads a missing boolean as false, so the API reads these from
+the request body rather than the form.
+
+Due dates are reminders only — nothing is recorded automatically. The daily
+catch-up raises an alert per collection date, once, when it is within three days
+or past.
 
 ## Real-time
 
@@ -97,6 +135,14 @@ Each message is a JSON object with a `kind`:
 - `request.created` · `request.approved` · `request.rejected`: `{message, link, level, for_user_id, request_id}`
 
 Only the member named in `for_user_id` should surface an event that carries one.
+
+An event that deserves a notification also carries
+`notification: {title, body, thread_id, exclude_user_id}` — the same text the
+server would send through Firebase. The Android app's foreground watcher raises
+its notification straight from this rather than composing its own, and applies
+the same rule the server does for who it concerns: the member in `for_user_id`,
+or everyone except `exclude_user_id`. An event without the key should not
+interrupt anyone.
 
 ## Push notifications
 
@@ -121,7 +167,11 @@ Android messages are high priority and target the `homebudget_default` channel,
 which the app must have created; `thread_id` (`chat-<household>`,
 `request-<id>`) groups notifications that should replace each other.
 
-The server only pushes when `FCM_CREDENTIALS_FILE` is set to a Firebase
-service-account key. With it unset the API behaves identically, minus the push.
+The server only pushes through Firebase when `FCM_CREDENTIALS_FILE` is set to a
+service-account key. With it unset the API behaves identically, minus the push —
+and the Android app does not need it at all: it gets the same events over the
+WebSocket and raises its own notifications from a foreground service
+(`mobile/lib/core/watch_service.dart`), so Android works with nothing but this
+server. iOS has no equivalent and does need Firebase.
 Tokens Firebase reports as unregistered are deleted automatically, so a client
 that never calls `devices/unregister/` does no harm.

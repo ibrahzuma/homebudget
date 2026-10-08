@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../core/push.dart';
+import '../core/notifications.dart';
 import '../core/session.dart';
 import '../widgets/common.dart';
 import 'chat/chat_screen.dart';
@@ -36,10 +36,10 @@ class AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
-    final push = context.read<PushService>();
-    _taps = push.taps.listen(_open);
+    final alerts = context.read<BackgroundAlerts>();
+    _taps = alerts.taps.listen(_open);
     // A notification the user tapped to launch the app, held until now.
-    final launch = push.takeLaunchTap();
+    final launch = alerts.takeLaunchTap();
     if (launch != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _open(launch));
     }

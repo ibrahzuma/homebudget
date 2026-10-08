@@ -21,8 +21,11 @@ from .forms import (
     MeetingForm, AgreementItemForm,
     GoalForm, GoalContributionForm, ProjectForm,
     ReceivableForm, ReceivablePaymentForm,
+    ContributionGroupForm, GroupMemberForm, GroupContributionForm,
+    GroupPayoutForm, GroupLoanForm,
 )
 from .models import (
+    ContributionGroup, GroupMember,
     Household, Transaction, Category, Budget, RecurringTransaction,
     CategoryRule, Alert, MoneyRequest, Asset, Liability, LiabilityPayment,
     Currency, ExchangeRate,
@@ -44,6 +47,8 @@ from .services import (
     carry_over_open_items, suggest_next_meeting_date, normalize_agreement_completion,
     quick_update_agreement, mark_chat_read, send_chat_message,
     mobile_app_release,
+    group_summary, record_group_contribution, request_group_contribution,
+    record_group_payout, record_group_loan,
     write_transactions_csv, import_transactions_csv,
     dashboard_summary, calendar_month, monthly_report_data,
 )
@@ -1717,3 +1722,230 @@ def app_download_file(request):
         filename=name,
         content_type='application/vnd.android.package-archive',
     )
+
+
+# ============================================================
+# CONTRIBUTION GROUPS (vikoba / mchezo)
+# ============================================================
+
+def _group_or_404(request, pk):
+    return get_object_or_404(ContributionGroup, pk=pk,
+                             household=get_user_household(request.user))
+
+
+def _settle_single_mine(group, member):
+    """Only one slot in the rotation can be the household's own turn."""
+    if member.is_mine:
+        group.members.exclude(pk=member.pk).filter(is_mine=True).update(is_mine=False)
+
+
+@login_required
+@ensure_household
+def group_list(request):
+    household = get_user_household(request.user)
+    return render(request, 'budget_app/group_list.html', group_summary(household))
+
+
+@login_required
+@ensure_household
+def group_create(request):
+    household = get_user_household(request.user)
+    if request.method == 'POST':
+        form = ContributionGroupForm(request.POST)
+        if form.is_valid():
+            g = form.save(commit=False)
+            g.household = household
+            if not g.currency:
+                g.currency = household.base_currency
+            g.save()
+            messages.success(request, f"{g.name} added.")
+            return redirect('group_detail', pk=g.pk)
+    else:
+        form = ContributionGroupForm(initial={
+            'currency': household.base_currency,
+            'start_date': timezone.now().date(),
+        })
+    return render(request, 'budget_app/group_form.html', {
+        'form': form, 'title': 'New group',
+    })
+
+
+@login_required
+@ensure_household
+def group_detail(request, pk):
+    group = _group_or_404(request, pk)
+    return render(request, 'budget_app/group_detail.html', {
+        'group': group,
+        'members': group.members.all(),
+        'contributions': group.contributions.select_related(
+            'user', 'currency', 'money_request').all()[:50],
+        'payouts': group.payouts.select_related('user', 'currency', 'member').all()[:50],
+        'loans': group.loans.select_related('currency').all(),
+    })
+
+
+@login_required
+@ensure_household
+def group_edit(request, pk):
+    group = _group_or_404(request, pk)
+    if request.method == 'POST':
+        form = ContributionGroupForm(request.POST, instance=group)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Group updated.")
+            return redirect('group_detail', pk=group.pk)
+    else:
+        form = ContributionGroupForm(instance=group)
+    return render(request, 'budget_app/group_form.html', {
+        'form': form, 'title': f'Edit {group.name}', 'group': group,
+    })
+
+
+@login_required
+@ensure_household
+def group_delete(request, pk):
+    group = _group_or_404(request, pk)
+    if request.method == 'POST':
+        group.delete()
+        messages.info(request, "Group removed.")
+        return redirect('group_list')
+    return render(request, 'budget_app/group_confirm_delete.html', {'group': group})
+
+
+@login_required
+@ensure_household
+def group_contribute(request, pk):
+    """Pay in - directly, or by asking the partner to approve it first."""
+    group = _group_or_404(request, pk)
+    household = group.household
+    if request.method == 'POST':
+        form = GroupContributionForm(request.POST, household=household,
+                                     exclude_user=request.user)
+        if form.is_valid():
+            contribution = form.save(commit=False)
+            approver = form.cleaned_data.get('approver')
+            if approver:
+                request_group_contribution(group, contribution, request.user, approver)
+                messages.success(request, f"Sent to {approver.username} for approval.")
+            else:
+                record_group_contribution(group, contribution, request.user)
+                messages.success(request, "Contribution recorded.")
+            return redirect('group_detail', pk=group.pk)
+    else:
+        form = GroupContributionForm(
+            household=household, exclude_user=request.user,
+            initial={'amount': group.contribution_amount,
+                     'date': group.next_due_date or timezone.now().date()})
+    return render(request, 'budget_app/group_action_form.html', {
+        'form': form, 'group': group, 'title': f'Contribute to {group.name}',
+        'submit_label': 'Save contribution',
+        'intro': 'Leave the approver blank to record it now, or pick your partner '
+                 'to send it for approval first.',
+    })
+
+
+@login_required
+@ensure_household
+def group_payout(request, pk):
+    """Record money collected from the group - a mchezo turn or a share-out."""
+    group = _group_or_404(request, pk)
+    if request.method == 'POST':
+        form = GroupPayoutForm(request.POST, group=group)
+        if form.is_valid():
+            record_group_payout(
+                group, form.save(commit=False), request.user,
+                record_as_income=form.cleaned_data.get('record_as_income', True))
+            messages.success(request, "Payout recorded as income.")
+            return redirect('group_detail', pk=group.pk)
+    else:
+        mine = group.my_member
+        form = GroupPayoutForm(group=group, initial={
+            'amount': group.expected_payout or group.contribution_amount,
+            'date': (mine.turn_date if mine else None) or timezone.now().date(),
+            'member': mine,
+        })
+    return render(request, 'budget_app/group_action_form.html', {
+        'form': form, 'group': group, 'title': f'Received from {group.name}',
+        'submit_label': 'Save payout',
+        'intro': 'Money collected from the group. Recorded as income.',
+    })
+
+
+@login_required
+@ensure_household
+def group_loan(request, pk):
+    """Record a loan taken from a vikoba. Lands under Debts as well."""
+    group = _group_or_404(request, pk)
+    if request.method == 'POST':
+        form = GroupLoanForm(request.POST)
+        if form.is_valid():
+            record_group_loan(
+                group, form.save(commit=False), request.user,
+                record_as_income=form.cleaned_data.get('record_as_income', False))
+            messages.success(request, "Loan recorded. It also appears under Debts.")
+            return redirect('group_detail', pk=group.pk)
+    else:
+        form = GroupLoanForm(initial={
+            'name': f'Loan from {group.name}',
+            'currency': group.currency or group.household.base_currency,
+            'start_date': timezone.now().date(),
+        })
+    return render(request, 'budget_app/group_action_form.html', {
+        'form': form, 'group': group, 'title': f'Loan from {group.name}',
+        'submit_label': 'Save loan',
+        'intro': 'This is saved as a debt, so it also shows under Debts and uses the '
+                 'normal repayment screens.',
+    })
+
+
+@login_required
+@ensure_household
+def group_member_create(request, pk):
+    group = _group_or_404(request, pk)
+    if request.method == 'POST':
+        form = GroupMemberForm(request.POST)
+        if form.is_valid():
+            m = form.save(commit=False)
+            m.group = group
+            m.save()
+            _settle_single_mine(group, m)
+            messages.success(request, f"{m.name} added to the rotation.")
+            return redirect('group_detail', pk=group.pk)
+    else:
+        form = GroupMemberForm(initial={'turn_order': group.member_count + 1})
+    return render(request, 'budget_app/group_action_form.html', {
+        'form': form, 'group': group, 'title': f'Add member to {group.name}',
+        'submit_label': 'Add member',
+        'intro': 'One slot in the rotation. Tick the last box for your own turn.',
+    })
+
+
+@login_required
+@ensure_household
+def group_member_edit(request, pk, member_pk):
+    group = _group_or_404(request, pk)
+    member = get_object_or_404(GroupMember, pk=member_pk, group=group)
+    if request.method == 'POST':
+        form = GroupMemberForm(request.POST, instance=member)
+        if form.is_valid():
+            m = form.save()
+            _settle_single_mine(group, m)
+            messages.success(request, "Member updated.")
+            return redirect('group_detail', pk=group.pk)
+    else:
+        form = GroupMemberForm(instance=member)
+    return render(request, 'budget_app/group_action_form.html', {
+        'form': form, 'group': group, 'member': member,
+        'title': f'Edit {member.name}',
+        'submit_label': 'Save member',
+    })
+
+
+@login_required
+@ensure_household
+def group_member_delete(request, pk, member_pk):
+    group = _group_or_404(request, pk)
+    member = get_object_or_404(GroupMember, pk=member_pk, group=group)
+    member.delete()
+    messages.info(request, "Member removed from the rotation.")
+    return redirect('group_detail', pk=group.pk)

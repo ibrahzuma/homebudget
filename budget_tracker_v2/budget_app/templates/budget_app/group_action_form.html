@@ -1,0 +1,42 @@
+{% extends 'budget_app/base.html' %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+
+<nav class="mb-3 small">
+    <a href="{% url 'group_detail' group.pk %}" class="text-decoration-none">
+        <i class="bi bi-chevron-left"></i> {{ group.name }}</a>
+</nav>
+
+<div class="row justify-content-center">
+    <div class="col-lg-7">
+        <div class="card p-4">
+            <h3 class="mb-1"><i class="bi {{ group.icon }}" style="color: {{ group.color }}"></i> {{ title }}</h3>
+            {% if intro %}<p class="text-muted small mb-4">{{ intro }}</p>{% else %}<div class="mb-3"></div>{% endif %}
+            <form method="post" novalidate>
+                {% csrf_token %}
+                {% for e in form.non_field_errors %}<div class="alert alert-danger py-2">{{ e }}</div>{% endfor %}
+                {% for field in form %}
+                <div class="mb-3{% if field.field.widget.input_type == 'checkbox' %} form-check{% endif %}">
+                    {% if field.field.widget.input_type == 'checkbox' %}
+                        {{ field }}
+                        <label class="form-check-label ms-1">{{ field.label }}</label>
+                    {% else %}
+                        <label class="form-label">{{ field.label }}</label>
+                        {{ field }}
+                    {% endif %}
+                    {% if field.help_text %}<small class="text-muted d-block">{{ field.help_text }}</small>{% endif %}
+                    {% for e in field.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+                </div>
+                {% endfor %}
+                <div class="d-flex justify-content-between align-items-center">
+                    <a href="{% url 'group_detail' group.pk %}" class="text-muted">Cancel</a>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-lg"></i> {{ submit_label|default:"Save" }}
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

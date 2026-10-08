@@ -555,6 +555,12 @@ class Liability(models.Model):
                                          help_text='Annual %')
     lender = models.CharField(max_length=200, blank=True,
                               help_text='Bank, person, or institution holding the debt')
+    # A loan taken from a vikoba is an ordinary debt — it belongs here so that
+    # repayments, balances and the debt pages all work unchanged — but it is
+    # also shown on the group it came from.
+    group = models.ForeignKey('ContributionGroup', on_delete=models.SET_NULL,
+                              null=True, blank=True, related_name='loans',
+                              help_text='Set when this is a loan from a vikoba')
     start_date = models.DateField(null=True, blank=True)
     due_date = models.DateField(null=True, blank=True,
                                 help_text='Final repayment date')
@@ -985,6 +991,247 @@ class NetWorthSnapshot(models.Model):
 
     def __str__(self):
         return f"Snapshot {self.snapshot_date}: {self.net_worth}"
+
+
+# ============================================================
+# CONTRIBUTION GROUPS (vikoba / mchezo)
+# ============================================================
+
+class ContributionGroup(models.Model):
+    """A savings group the household pays into, of one of two Tanzanian kinds.
+
+    **Vikoba** (village community bank): members build up a pool of savings and
+    can borrow from it. Money flows out as contributions, back in as a
+    share-out, and a loan taken from the pool is a real debt — so it is kept in
+    ``Liability`` (see its ``group`` field) rather than modelled again here, and
+    repayments go through the existing debt machinery.
+
+    **Mchezo** (rotating pot, a merry-go-round): everyone pays in on an agreed
+    date and one member takes the whole collection, turn by turn, until everyone
+    has had one. What you receive therefore depends on how many members there
+    are, which is why the rotation is tracked in ``GroupMember``.
+
+    Only the household's own money becomes transactions. The rotation is
+    recorded so the app can say what is coming and when, not to keep the
+    group's books.
+    """
+    TYPE_VIKOBA = 'vikoba'
+    TYPE_MCHEZO = 'mchezo'
+    TYPE_CHOICES = [
+        (TYPE_VIKOBA, 'Vikoba (savings & loans)'),
+        (TYPE_MCHEZO, 'Mchezo (rotating pot)'),
+    ]
+
+    # Same vocabulary as RecurringTransaction, so "monthly" means one thing.
+    FREQ_CHOICES = RecurringTransaction.FREQ_CHOICES
+
+    household = models.ForeignKey(Household, on_delete=models.CASCADE,
+                                  related_name='contribution_groups')
+    name = models.CharField(max_length=120, help_text='e.g. "Mama Lishe Vikoba"')
+    group_type = models.CharField(max_length=10, choices=TYPE_CHOICES, default=TYPE_MCHEZO)
+    contribution_amount = models.DecimalField(
+        max_digits=12, decimal_places=2,
+        help_text='What you pay in each time')
+    currency = models.ForeignKey(Currency, on_delete=models.PROTECT, null=True, blank=True)
+    frequency = models.CharField(max_length=15, choices=FREQ_CHOICES,
+                                 default=RecurringTransaction.MONTHLY)
+    start_date = models.DateField(default=timezone.now)
+    next_due_date = models.DateField(
+        null=True, blank=True,
+        help_text='The next agreed collection date. Cleared when the group ends.')
+    icon = models.CharField(max_length=50, default='bi-people-fill',
+                            help_text='Bootstrap icon class')
+    color = models.CharField(max_length=7, default='#6f42c1')
+    is_active = models.BooleanField(default=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-is_active', 'next_due_date', 'name']
+
+    def __str__(self):
+        return f"{self.name} ({self.get_group_type_display()})"
+
+    @property
+    def is_mchezo(self):
+        return self.group_type == self.TYPE_MCHEZO
+
+    @property
+    def is_vikoba(self):
+        return self.group_type == self.TYPE_VIKOBA
+
+    # ---- money (one currency per group, so plain sums are safe here) ----
+
+    @property
+    def total_contributed(self):
+        return self.contributions.aggregate(s=models.Sum('amount'))['s'] or Decimal('0')
+
+    @property
+    def total_received(self):
+        return self.payouts.aggregate(s=models.Sum('amount'))['s'] or Decimal('0')
+
+    @property
+    def net_position(self):
+        """Paid in minus taken out. Positive means the group owes you."""
+        return self.total_contributed - self.total_received
+
+    @property
+    def outstanding_loans(self):
+        return self.loans.aggregate(s=models.Sum('balance'))['s'] or Decimal('0')
+
+    # ---- the rotation ----
+
+    @property
+    def member_count(self):
+        return self.members.count()
+
+    @property
+    def expected_payout(self):
+        """What one mchezo turn collects: everyone's contribution, once.
+
+        None for a vikoba, where a share-out is not a fixed multiple, and until
+        the rotation has been entered.
+        """
+        if not self.is_mchezo:
+            return None
+        count = self.member_count
+        if not count:
+            return None
+        return self.contribution_amount * count
+
+    @property
+    def my_member(self):
+        return self.members.filter(is_mine=True).first()
+
+    @property
+    def my_turn_date(self):
+        mine = self.my_member
+        return mine.turn_date if mine else None
+
+    @property
+    def next_turn(self):
+        """Whose turn is next: the earliest dated member still to receive."""
+        return (self.members.filter(received_on__isnull=True, turn_date__isnull=False)
+                .order_by('turn_date').first()
+                or self.members.filter(received_on__isnull=True).first())
+
+    # ---- due dates ----
+
+    @property
+    def days_until_due(self):
+        if not self.next_due_date:
+            return None
+        return (self.next_due_date - timezone.now().date()).days
+
+    @property
+    def is_overdue(self):
+        days = self.days_until_due
+        return self.is_active and days is not None and days < 0
+
+    @property
+    def is_due_soon(self):
+        days = self.days_until_due
+        return self.is_active and days is not None and 0 <= days <= 3
+
+    def advance_due_date(self, from_date=None):
+        """Next collection date, using the same arithmetic as recurring items."""
+        base = from_date or self.next_due_date
+        if not base:
+            return None
+        return RecurringTransaction(frequency=self.frequency,
+                                    next_due_date=base).advance_due_date()
+
+
+class GroupMember(models.Model):
+    """One member of the group, and when their turn to receive falls.
+
+    Most members are other people, recorded by name only — they are not users of
+    this app. Exactly one row should be ``is_mine``: the household's own slot,
+    which is what drives "your turn" everywhere in the UI.
+    """
+    group = models.ForeignKey(ContributionGroup, on_delete=models.CASCADE,
+                              related_name='members')
+    name = models.CharField(max_length=120)
+    turn_order = models.PositiveIntegerField(default=1, help_text='1 = first to receive')
+    turn_date = models.DateField(null=True, blank=True,
+                                 help_text='The date this member collects')
+    is_mine = models.BooleanField(default=False,
+                                  help_text="This is our household's slot")
+    received_on = models.DateField(null=True, blank=True,
+                                   help_text='Set once they have taken their turn')
+    phone = models.CharField(max_length=30, blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['turn_order', 'id']
+
+    def __str__(self):
+        return f"{self.turn_order}. {self.name}"
+
+    @property
+    def has_received(self):
+        return self.received_on is not None
+
+
+class GroupContribution(models.Model):
+    """One payment the household made into the group.
+
+    ``money_request`` is set when it went through a partner's approval instead
+    of being recorded directly; the approval is what creates ``transaction``.
+    """
+    group = models.ForeignKey(ContributionGroup, on_delete=models.CASCADE,
+                              related_name='contributions')
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                             related_name='group_contributions')
+    date = models.DateField(default=timezone.now)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.ForeignKey(Currency, on_delete=models.PROTECT, null=True, blank=True)
+    notes = models.TextField(blank=True)
+    transaction = models.ForeignKey(
+        Transaction, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='group_contribution_for')
+    money_request = models.ForeignKey(
+        MoneyRequest, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='group_contribution_for')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date', '-created_at']
+
+    def __str__(self):
+        return f"{self.amount} to {self.group.name} on {self.date}"
+
+    @property
+    def awaiting_approval(self):
+        return (self.money_request is not None
+                and self.money_request.status == MoneyRequest.STATUS_PENDING)
+
+
+class GroupPayout(models.Model):
+    """Money the household received from the group — a mchezo turn, or a
+    vikoba share-out. Recorded as income."""
+    group = models.ForeignKey(ContributionGroup, on_delete=models.CASCADE,
+                              related_name='payouts')
+    member = models.ForeignKey(GroupMember, on_delete=models.SET_NULL, null=True, blank=True,
+                               related_name='payouts',
+                               help_text='The rotation slot this settles')
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                             related_name='group_payouts')
+    date = models.DateField(default=timezone.now)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.ForeignKey(Currency, on_delete=models.PROTECT, null=True, blank=True)
+    notes = models.TextField(blank=True)
+    transaction = models.ForeignKey(
+        Transaction, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='group_payout_for')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date', '-created_at']
+
+    def __str__(self):
+        return f"{self.amount} from {self.group.name} on {self.date}"
 
 
 # ============================================================

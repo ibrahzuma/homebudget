@@ -60,6 +60,7 @@ Sign up at `/signup/`, then `/household/setup/` to create the household. `seed_h
 | `Alert` | Optional `user` (null = household-wide). info/warning/danger. |
 | `MoneyRequest` | pending/approved/rejected/cancelled. On approval: atomically creates paired income+expense transactions. |
 | `Asset`, `Liability`, `NetWorthSnapshot` | Net worth tracking with optional periodic snapshots. |
+| `ContributionGroup` | A **vikoba** (savings + loans) or **mchezo** (rotating pot). `GroupMember` is the rotation, `GroupContribution` money in, `GroupPayout` money out. |
 | `DeviceToken` | One FCM registration token per mobile install. Belongs to a *user*, not a household. |
 
 Important invariants:
@@ -92,10 +93,11 @@ shared the same way.
 - `forecast_end_of_month(household)` — actual + (daily rate × days remaining) + known upcoming recurring. Note: incoming side is dampened by `* 0.3` (treats unknown future income conservatively).
 - `compute_net_worth(household)` — sums `Asset.value` − `Liability.balance`, converting each via `ExchangeRate`. Returns totals + per-type breakdown.
 - `bills_in_month(household, target_date)` — projects recurring expenses across a month for the calendar view. Has a 60-iteration guard.
+- `record_group_contribution` / `request_group_contribution` — pay into a vikoba/mchezo now, or via the partner's approval. The second creates a `MoneyRequest`; `approve_money_request` then fills in the contribution's expense, so the two paths converge. `record_group_payout` books income and settles a rotation slot; `record_group_loan` writes a `Liability` with `group` set, so vikoba loans reuse the whole debt machinery rather than duplicating it. `check_group_due_alerts` nags once per collection date.
 
 ## URL map (`budget_app/urls.py`)
 
-Auth (`/login/`, `/logout/`) and `/admin/` live in `budget_project/urls.py`. Everything else is in `budget_app/urls.py`: dashboard `/`, `/signup/`, `/download/` + `/download/app.apk` (**public** — the Android APK landing page, served from `APK_PATH` outside the repo), `/household/{setup,settings}/`, CRUD for `/transactions/`, `/categories/`, `/budgets/`, `/recurring/` (+ `/recurring/run-now/`), `/rules/` (+ `/rules/apply/`), `/alerts/`, `/requests/`, `/networth/` (+ `/assets/`, `/liabilities/`, `/networth/snapshot/`), `/currencies/` (+ `/currencies/rates/new/`), `/import/csv/` & `/export/csv/`, `/forecast/`, `/calendar/`.
+Auth (`/login/`, `/logout/`) and `/admin/` live in `budget_project/urls.py`. Everything else is in `budget_app/urls.py`: dashboard `/`, `/signup/`, `/download/` + `/download/app.apk` (**public** — the Android APK landing page, served from `APK_PATH` outside the repo), `/household/{setup,settings}/`, CRUD for `/transactions/`, `/categories/`, `/budgets/`, `/recurring/` (+ `/recurring/run-now/`), `/rules/` (+ `/rules/apply/`), `/alerts/`, `/requests/`, `/networth/` (+ `/assets/`, `/liabilities/`, `/networth/snapshot/`), `/currencies/` (+ `/currencies/rates/new/`), `/import/csv/` & `/export/csv/`, `/forecast/`, `/calendar/`, `/groups/` (vikoba & mchezo, + `/contribute/`, `/payout/`, `/loan/`, `/members/`).
 
 ## Mobile API (`budget_app/api/`)
 
@@ -111,16 +113,27 @@ Reference: `docs/mobile-api.md`. Design rules:
 - The WebSocket accepts either the session cookie or an `Authorization: Token` header (`ws_auth.py`).
 
 **Push notifications.** `services.push_to_household(household, payload, notify=...,
-exclude_user=...)` is the single fan-out point: the `payload` goes to connected
-WebSockets as before, and passing `notify={'title','body','thread_id'}` *also*
-sends it through FCM (`push.py`) so it pops up while the app is closed. Today
-that is money requests, approve/reject and chat. Recipients are the payload's
-`for_user_id`, else every member bar `exclude_user`. Delivery runs on a daemon
-thread and no-ops entirely unless `FCM_CREDENTIALS_FILE` points at a Firebase
-service-account key, so dev and tests are unaffected. Devices register at
-`POST /api/v1/devices/`; the Android channel id `homebudget_default` is repeated
-in `push.py`, `mobile/lib/core/push.dart` and the Android manifest and must stay
-in sync. Setup steps: `mobile/README.md` and `budget_tracker_v2/README.md`.
+exclude_user=...)` is the single fan-out point. The `payload` goes to connected
+WebSockets as before; passing `notify={'title','body','thread_id'}` *also* (a)
+merges that text into the socket payload under `notification` and (b) sends it
+through FCM (`push.py`). Today that is money requests, approve/reject and chat.
+Recipients are the payload's `for_user_id`, else every member bar `exclude_user`.
+
+Two clients consume it, because the ways to wake a closed app differ per OS:
+
+- **Android** — `mobile/lib/core/watch_service.dart` runs a foreground service
+  holding `/ws/notify/` open and raises notifications from the `notification`
+  key. Needs nothing but this server; no Firebase, no Google. Costs a permanent
+  low-priority notice and a battery-optimisation exemption.
+- **iOS** — `mobile/lib/core/push.dart` registers an FCM token at
+  `POST /api/v1/devices/`; FCM delivery runs on a daemon thread and no-ops
+  unless `FCM_CREDENTIALS_FILE` is set, so dev and tests are unaffected.
+
+`main.dart` picks one by platform behind the `BackgroundAlerts` interface in
+`mobile/lib/core/notifications.dart`, which also owns the notification channel
+and drawing. The channel id `homebudget_default` is repeated in `push.py`,
+`notifications.dart` and the Android manifest and must stay in sync. Setup
+steps: `mobile/README.md` and `budget_tracker_v2/README.md`.
 
 ## Stack
 
