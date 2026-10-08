@@ -20,6 +20,17 @@ media/
 *.sqlite3-wal
 *.sqlite3-shm
 
+# Published Android builds served from /download/ (build output, ~25 MB each).
+# Production keeps these in /opt/homebudget/releases via APK_PATH.
+releases/
+*.apk
+*.aab
+
+# Firebase config: project-specific, and the service-account key is a secret
+google-services.json
+GoogleService-Info.plist
+fcm-service-account*.json
+
 # Backups produced by deploy/backup-db.py
 backups/
 db-*.sqlite3.gz

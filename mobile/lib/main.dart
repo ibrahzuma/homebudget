@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'core/push.dart';
 import 'core/realtime.dart';
 import 'core/session.dart';
 import 'screens/auth/login_screen.dart';
@@ -8,15 +9,23 @@ import 'screens/household/setup_screen.dart';
 import 'screens/shell.dart';
 import 'widgets/common.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final session = Session()..restore();
-  runApp(HomeBudgetApp(session: session));
+  final session = Session();
+  final push = PushService(session);
+  // Unregister this device while the API token is still valid.
+  session.onSignOut = push.stop;
+  // Before the first frame, so a notification that launched the app is picked
+  // up by the shell rather than missed.
+  await push.initialise();
+  session.restore();
+  runApp(HomeBudgetApp(session: session, push: push));
 }
 
 class HomeBudgetApp extends StatelessWidget {
-  const HomeBudgetApp({super.key, required this.session});
+  const HomeBudgetApp({super.key, required this.session, required this.push});
   final Session session;
+  final PushService push;
 
   @override
   Widget build(BuildContext context) {
@@ -24,6 +33,7 @@ class HomeBudgetApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider.value(value: session),
         Provider<Realtime>(create: (_) => Realtime(session), dispose: (_, r) => r.dispose()),
+        Provider<PushService>.value(value: push),
       ],
       child: MaterialApp(
         title: 'Home Budget',
@@ -60,8 +70,8 @@ ThemeData _theme(Brightness b) {
   );
 }
 
-/// Routes between sign-in, household setup and the app, and keeps the
-/// realtime socket connected only while signed in.
+/// Routes between sign-in, household setup and the app, and keeps the realtime
+/// socket connected and the device registered for push only while signed in.
 class AuthGate extends StatefulWidget {
   const AuthGate({super.key});
 
@@ -76,12 +86,15 @@ class _AuthGateState extends State<AuthGate> {
   Widget build(BuildContext context) {
     final session = context.watch<Session>();
     final rt = context.read<Realtime>();
+    final push = context.read<PushService>();
     if (session.state != _last) {
       _last = session.state;
       if (session.state == SessionState.ready) {
         rt.connect();
+        push.start();
       } else {
         rt.disconnect();
+        if (session.state == SessionState.signedOut) push.stop();
       }
     }
 

@@ -5,6 +5,10 @@ urlpatterns = [
     path('', views.dashboard, name='dashboard'),
     path('signup/', views.signup_view, name='signup'),
 
+    # Android app (public — no account needed to install it)
+    path('download/', views.app_download, name='app_download'),
+    path('download/app.apk', views.app_download_file, name='app_download_file'),
+
     # Household
     path('household/setup/', views.household_setup, name='household_setup'),
     path('household/settings/', views.household_settings, name='household_settings'),

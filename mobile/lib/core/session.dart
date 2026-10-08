@@ -34,6 +34,10 @@ class Session extends ChangeNotifier {
   /// Last error from [restore] when the server couldn't be reached.
   String? startupError;
 
+  /// Run just before signing out, while [api] still has a valid token — used by
+  /// [PushService] to unregister this device so it stops receiving push.
+  Future<void> Function()? onSignOut;
+
   String get currencySymbol => household?.currencySymbol ?? '\$';
   String get currencyCode => household?.currencyCode ?? 'USD';
   bool get hasPartner => (household?.members.length ?? 0) > 1;
@@ -80,6 +84,9 @@ class Session extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    try {
+      await onSignOut?.call();
+    } catch (_) {}
     try {
       await api.post('auth/logout/');
     } catch (_) {

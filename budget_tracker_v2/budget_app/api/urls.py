@@ -9,6 +9,10 @@ urlpatterns = [
     path('auth/signup/', v.SignupView.as_view()),
     path('auth/logout/', v.LogoutView.as_view()),
 
+    # Push notifications (FCM registration tokens)
+    path('devices/', v.DeviceRegisterView.as_view()),
+    path('devices/unregister/', v.DeviceUnregisterView.as_view()),
+
     # Session context
     path('me/', v.MeView.as_view()),
     path('meta/', v.MetaView.as_view()),

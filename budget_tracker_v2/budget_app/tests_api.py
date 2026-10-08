@@ -1,7 +1,9 @@
 """Tests for the mobile JSON API (/api/v1/) and the web views that now share
 its service layer."""
+from contextlib import contextmanager
 from datetime import date, timedelta
 from decimal import Decimal
+from unittest import mock
 
 from asgiref.sync import async_to_sync
 from django.contrib.auth.models import User
@@ -13,8 +15,8 @@ from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
 
 from .models import (
-    AgreementItem, Alert, Category, Currency, ExchangeRate, Goal, Household,
-    HouseholdInvitation, Liability, Meeting, MoneyRequest, Receivable,
+    AgreementItem, Alert, Category, Currency, DeviceToken, ExchangeRate, Goal,
+    Household, HouseholdInvitation, Liability, Meeting, MoneyRequest, Receivable,
     RecurringTransaction, Transaction,
 )
 from .services import seed_household_defaults
@@ -38,6 +40,26 @@ def make_household(name, *users):
         h.members.add(u)
     seed_household_defaults(h)
     return h
+
+
+@contextmanager
+def captured_push():
+    """Record what would go to Firebase instead of sending it.
+
+    Pretends a service-account key is configured, so the device-push half of
+    ``push_to_household`` runs, and collects its arguments.
+    """
+    sent = []
+
+    def capture(users, title, body, data=None, thread_id=None):
+        sent.append({
+            'users': sorted(getattr(u, 'pk', u) for u in users),
+            'title': title, 'body': body,
+            'data': data or {}, 'thread_id': thread_id,
+        })
+
+    with override_settings(FCM_CREDENTIALS_FILE='/not/a/real/key.json'),             mock.patch('budget_app.push.send_to_users', side_effect=capture):
+        yield sent
 
 
 def api_for(user):
@@ -532,3 +554,212 @@ class WebSocketTokenAuthTests(TransactionTestCase):
         msg = async_to_sync(run)()
         self.assertEqual(msg['kind'], 'chat.new')
         self.assertEqual(msg['body'], 'hello')
+
+class PushNotificationTests(APITestBase):
+    """Device registration and the OS-level pushes that go with household events."""
+
+    def register(self, client, token, platform='android'):
+        return client.post('/api/v1/devices/', {'token': token, 'platform': platform},
+                           format='json')
+
+    def test_register_requires_a_token_and_a_known_platform(self):
+        self.assertEqual(self.a.post('/api/v1/devices/', {}, format='json').status_code, 400)
+        self.assertEqual(self.register(self.a, 'tok-1', 'symbian').status_code, 400)
+        self.assertFalse(DeviceToken.objects.exists())
+
+    def test_registering_is_idempotent_and_moves_a_token_between_accounts(self):
+        self.assertEqual(self.register(self.a, 'tok-1', 'ios').status_code, 204)
+        self.assertEqual(self.register(self.a, 'tok-1', 'ios').status_code, 204)
+        row = DeviceToken.objects.get()
+        self.assertEqual((row.user, row.platform), (self.alice, 'ios'))
+        # Same handset, now signed in as Bob: the token must not push to Alice.
+        self.assertEqual(self.register(self.b, 'tok-1').status_code, 204)
+        row = DeviceToken.objects.get()
+        self.assertEqual((row.user, row.platform), (self.bob, 'android'))
+
+    def test_unregister_only_touches_your_own_token(self):
+        self.register(self.a, 'tok-alice')
+        self.register(self.b, 'tok-bob')
+        self.ok(self.b.post('/api/v1/devices/unregister/', {'token': 'tok-alice'},
+                            format='json'), 204)
+        self.assertEqual(DeviceToken.objects.count(), 2)
+        self.ok(self.a.post('/api/v1/devices/unregister/', {'token': 'tok-alice'},
+                            format='json'), 204)
+        self.assertEqual([r.token for r in DeviceToken.objects.all()], ['tok-bob'])
+
+    def test_logout_drops_this_devices_registration(self):
+        self.register(self.a, 'tok-1')
+        self.register(self.b, 'tok-2')
+        self.ok(self.a.post('/api/v1/auth/logout/', {'device_token': 'tok-1'},
+                            format='json'), 204)
+        self.assertEqual([r.token for r in DeviceToken.objects.all()], ['tok-2'])
+
+    def test_a_new_request_pushes_to_the_approver_only(self):
+        with captured_push() as sent:
+            self.ok(self.a.post('/api/v1/requests/', {
+                'approver': self.bob.pk, 'amount': '30', 'currency': self.usd.pk,
+                'purpose': 'School fees'}, format='json'), 201)
+        self.assertEqual(len(sent), 1)
+        push = sent[0]
+        self.assertEqual(push['users'], [self.bob.pk])
+        self.assertEqual(push['title'], 'Money request from alice')
+        self.assertIn('School fees', push['body'])
+        # What the app needs to open the right screen on a tap.
+        self.assertEqual(push['data']['kind'], 'request.created')
+        self.assertEqual(push['data']['request_id'], MoneyRequest.objects.get().pk)
+
+    def test_approving_and_rejecting_push_back_to_the_requester(self):
+        made = self.ok(self.a.post('/api/v1/requests/', {
+            'approver': self.bob.pk, 'amount': '30', 'purpose': 'Fuel'}, format='json'), 201)
+        with captured_push() as sent:
+            self.ok(self.b.post(f"/api/v1/requests/{made['id']}/approve/"))
+        self.assertEqual([p['users'] for p in sent], [[self.alice.pk]])
+        self.assertEqual(sent[0]['title'], 'Request approved by bob')
+
+        made = self.ok(self.a.post('/api/v1/requests/', {
+            'approver': self.bob.pk, 'amount': '30', 'purpose': 'Fuel'}, format='json'), 201)
+        with captured_push() as sent:
+            self.ok(self.b.post(f"/api/v1/requests/{made['id']}/reject/", {'note': 'later'},
+                                format='json'))
+        self.assertEqual(sent[0]['users'], [self.alice.pk])
+        self.assertIn('later', sent[0]['body'])
+
+    def test_a_chat_message_pushes_to_everyone_but_the_sender(self):
+        with captured_push() as sent:
+            self.ok(self.a.post('/api/v1/chat/', {'body': 'dinner?'}, format='json'), 201)
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0]['users'], [self.bob.pk])
+        self.assertEqual((sent[0]['title'], sent[0]['body']), ('alice', 'dinner?'))
+        # One running notification per conversation rather than one per line.
+        self.assertEqual(sent[0]['thread_id'], f'chat-{self.hh.id}')
+
+    def test_cancelling_pushes_to_nobody(self):
+        made = self.ok(self.a.post('/api/v1/requests/', {
+            'approver': self.bob.pk, 'amount': '30', 'purpose': 'Fuel'}, format='json'), 201)
+        with captured_push() as sent:
+            self.ok(self.a.post(f"/api/v1/requests/{made['id']}/cancel/"))
+        self.assertEqual(sent, [])
+
+    def test_nothing_is_sent_when_firebase_is_not_configured(self):
+        from . import push as push_module
+        self.register(self.b, 'tok-bob')
+        self.assertFalse(push_module.is_configured())
+        with mock.patch.object(push_module, '_deliver') as deliver:
+            # The app's own default: no credentials file, so no delivery at all.
+            self.ok(self.a.post('/api/v1/requests/', {
+                'approver': self.bob.pk, 'amount': '5', 'purpose': 'Airtime'}, format='json'), 201)
+            push_module.send_to_users([self.bob], 'x', 'y')
+        deliver.assert_not_called()
+
+
+class FCMMessageTests(TestCase):
+    """The wire format we hand Firebase, and how its replies are read."""
+
+    def test_message_is_high_priority_on_our_channel(self):
+        from . import push as push_module
+        row = DeviceToken(token='tok-1', platform='android')
+        msg = push_module._message(row, 'Title', 'Body', {'kind': 'chat.new'},
+                                   'chat-7')['message']
+        self.assertEqual(msg['token'], 'tok-1')
+        self.assertEqual(msg['notification'], {'title': 'Title', 'body': 'Body'})
+        self.assertEqual(msg['data'], {'kind': 'chat.new'})
+        self.assertEqual(msg['android']['priority'], 'high')
+        self.assertEqual(msg['android']['notification']['channel_id'],
+                         push_module.ANDROID_CHANNEL_ID)
+        # Replaces the previous notification for the same conversation.
+        self.assertEqual(msg['android']['notification']['tag'], 'chat-7')
+        self.assertEqual(msg['apns']['payload']['aps']['thread-id'], 'chat-7')
+
+    def test_data_values_are_stringified_for_fcm(self):
+        from . import push as push_module
+        with override_settings(FCM_CREDENTIALS_FILE='/not/a/real/key.json'), \
+                mock.patch.object(push_module, '_deliver') as deliver:
+            worker = push_module.send_to_users([7, 7, None], 'T', 'B',
+                                               data={'request_id': 12, 'link': None})
+            worker.join(timeout=5)
+        user_ids, title, body, data, thread_id = deliver.call_args.args
+        self.assertEqual(user_ids, [7])
+        self.assertEqual(data, {'request_id': '12', 'link': ''})
+
+    def test_dead_tokens_are_recognised_and_dropped(self):
+        from . import push as push_module
+
+        class Res:
+            def __init__(self, status_code, text=''):
+                self.status_code, self.text = status_code, text
+
+        with mock.patch('requests.post') as post:
+            post.return_value = Res(200)
+            self.assertEqual(push_module._post('u', {}, {}), 'ok')
+            post.return_value = Res(404, '{"error": {"status": "NOT_FOUND"}}')
+            self.assertEqual(push_module._post('u', {}, {}), 'stale')
+            post.return_value = Res(500, 'backend error')
+            self.assertEqual(push_module._post('u', {}, {}), 'error')
+            post.side_effect = OSError('no route to host')
+            self.assertEqual(push_module._post('u', {}, {}), 'error')
+
+
+class AppDownloadPageTests(TestCase):
+    """The public /download/ landing page and the APK it serves."""
+
+    def test_page_and_file_are_public_and_report_no_build(self):
+        c = Client()
+        with override_settings(APK_PATH='/no/such/build.apk'):
+            page = c.get('/download/')
+            self.assertEqual(page.status_code, 200)
+            self.assertContains(page, 'No build has been published yet')
+            # Signing in must not be a prerequisite for installing the app.
+            self.assertEqual(c.get('/download/app.apk').status_code, 404)
+
+    def test_published_build_is_offered_and_downloads(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            apk = Path(tmp) / 'homebudget.apk'
+            apk.write_bytes(b'PK' + b'0' * 2048)
+            with override_settings(APK_PATH=str(apk), APK_VERSION='1.0.0 (3)'):
+                page = Client().get('/download/')
+                self.assertContains(page, 'Version 1.0.0 (3)')
+                self.assertContains(page, '/download/app.apk')
+
+                res = Client().get('/download/app.apk')
+                self.assertEqual(res.status_code, 200)
+                self.assertEqual(res['Content-Type'],
+                                 'application/vnd.android.package-archive')
+                self.assertIn('home-budget-1.0.0.apk', res['Content-Disposition'])
+                self.assertEqual(b''.join(res.streaming_content), apk.read_bytes())
+
+    def test_login_and_dashboard_offer_the_build_only_when_there_is_one(self):
+        import tempfile
+        from pathlib import Path
+
+        alice = User.objects.create_user('alice', 'a@example.com', 'pw')
+        make_household('Home', alice)
+        signed_in = Client()
+        signed_in.force_login(alice)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            apk = Path(tmp) / 'homebudget.apk'
+            apk.write_bytes(b'PK' + b'0' * 2048)
+            with override_settings(APK_PATH=str(apk), APK_VERSION='1.0.0 (3)'):
+                login = Client().get('/login/')
+                self.assertContains(login, 'Download the Android app')
+                self.assertContains(login, '/download/app.apk')
+                self.assertContains(signed_in.get('/'), 'Download APK')
+
+        # No build uploaded: neither page mentions it rather than linking a 404.
+        with override_settings(APK_PATH='/no/such/build.apk'):
+            login = Client().get('/login/')
+            self.assertEqual(login.status_code, 200)
+            self.assertNotContains(login, 'Download the Android app')
+            dash = signed_in.get('/')
+            self.assertEqual(dash.status_code, 200)
+            self.assertNotContains(dash, 'Download APK')
+
+    def test_release_metadata_survives_a_missing_file(self):
+        from .services import mobile_app_release
+        with override_settings(APK_PATH='/no/such/build.apk'):
+            release = mobile_app_release()
+        self.assertFalse(release['available'])
+        self.assertIsNone(release['size_mb'])

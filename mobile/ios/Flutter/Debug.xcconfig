@@ -1,1 +1,4 @@
 #include "Generated.xcconfig"
+
+// Push Notifications capability (see Runner/Runner.entitlements).
+CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements

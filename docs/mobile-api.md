@@ -29,7 +29,9 @@ process as the web UI (`budget_tracker_v2/budget_app/api/`).
 |---|---|---|
 | POST | `auth/login/` | `{username, password}` → `{token, user}` |
 | POST | `auth/signup/` | `{username, email, password1, password2, invite?}` → `{token, user}`. A valid `invite` joins that household immediately. |
-| POST | `auth/logout/` | Deletes the token |
+| POST | `auth/logout/` | Deletes the token. Optional `{device_token}` also unregisters that phone from push |
+| POST | `devices/` | `{token, platform}` (`android`/`ios`) registers this install's FCM token → 204. Idempotent; a token already on file moves to the caller |
+| POST | `devices/unregister/` | `{token}` stops push to this install → 204 |
 | GET | `me/` | `{user{id,username,email}, household\|null, badges{unread_alerts,pending_requests,unread_chat}\|null}` |
 | GET | `meta/` | Picker data: `currencies`, `categories`, `members`, active `projects`, `choices{<enum>: [{value,label}]}` |
 | GET / POST / PATCH | `household/` | GET: settings incl. `members`, `pending_invites`, `past_invites`. POST: create `{name, base_currency?, partner_username?}`. PATCH: `{name?, base_currency?}` |
@@ -95,3 +97,31 @@ Each message is a JSON object with a `kind`:
 - `request.created` · `request.approved` · `request.rejected`: `{message, link, level, for_user_id, request_id}`
 
 Only the member named in `for_user_id` should surface an event that carries one.
+
+## Push notifications
+
+The socket above only reaches an app that is **running**. For a notification
+that has to appear while the app is backgrounded or closed, the server also
+sends the event through Firebase Cloud Messaging (`budget_app/push.py`) to every
+device token registered at `POST devices/`.
+
+Which events push, and to whom:
+
+| Event | Recipient | Title / body |
+|---|---|---|
+| `request.created` | the approver | `Money request from <user>` / `<amount> for <purpose>` |
+| `request.approved` · `request.rejected` | the requester | `Request approved/rejected by <user>` / the purpose |
+| `chat.new` | every member except the sender | the sender's name / the message |
+
+Each message carries both a `notification` block — so Android and iOS draw the
+popup themselves while the app is away — and a `data` block holding the same
+routing keys as the WebSocket event (`kind`, `link`, `request_id`, `id`,
+`sender_id`), which is what the app reads to open the right screen on a tap.
+Android messages are high priority and target the `homebudget_default` channel,
+which the app must have created; `thread_id` (`chat-<household>`,
+`request-<id>`) groups notifications that should replace each other.
+
+The server only pushes when `FCM_CREDENTIALS_FILE` is set to a Firebase
+service-account key. With it unset the API behaves identically, minus the push.
+Tokens Firebase reports as unregistered are deleted automatically, so a client
+that never calls `devices/unregister/` does no harm.

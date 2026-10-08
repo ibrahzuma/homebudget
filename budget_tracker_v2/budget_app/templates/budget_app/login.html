@@ -218,6 +218,37 @@
         }
         .auth-card .signup-link a:hover { text-decoration: underline; }
 
+        /* Android app download */
+        .app-cta {
+            display: flex; align-items: center; gap: 0.85rem;
+            margin-top: 1.5rem;
+            padding: 0.85rem 1rem;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            background: white;
+            text-decoration: none;
+            transition: border-color 0.15s, box-shadow 0.15s, transform 0.05s;
+        }
+        .app-cta:hover {
+            border-color: var(--brand-2);
+            box-shadow: 0 10px 24px -16px rgba(59,130,246,0.7);
+        }
+        .app-cta:active { transform: translateY(1px); }
+        .app-cta .ico {
+            flex: 0 0 38px; height: 38px;
+            border-radius: 10px;
+            background: rgba(22,163,74,0.1);
+            color: #16a34a;
+            display: grid; place-items: center;
+            font-size: 1.3rem;
+        }
+        .app-cta .txt { flex: 1; line-height: 1.35; }
+        .app-cta .txt strong {
+            display: block; font-size: 0.92rem; font-weight: 600; color: #0f172a;
+        }
+        .app-cta .txt span { font-size: 0.78rem; color: #64748b; }
+        .app-cta .bi-download { color: #94a3b8; }
+
         /* Page-load progress bar + logo chip */
         .page-loader {
             position: fixed;
@@ -398,6 +429,19 @@
             <div class="signup-link">
                 New here? <a href="{% url 'signup' %}">Create an account</a>
             </div>
+            {% if apk.available %}
+                <a class="app-cta" href="{% url 'app_download_file' %}">
+                    <span class="ico"><i class="bi bi-android2"></i></span>
+                    <span class="txt">
+                        <strong>Download the Android app</strong>
+                        <span>{% if apk.version %}Version {{ apk.version }} &middot; {% endif %}{{ apk.size_mb }} MB</span>
+                    </span>
+                    <i class="bi bi-download"></i>
+                </a>
+                <div class="signup-link" style="margin-top:0.6rem; font-size:0.82rem">
+                    <a href="{% url 'app_download' %}">How to install it</a>
+                </div>
+            {% endif %}
         </div>
     </main>
 </div>

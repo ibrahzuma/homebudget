@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/api.dart';
 import '../../core/models.dart';
+import '../../core/push.dart';
 import '../../core/realtime.dart';
 import '../../core/session.dart';
 import '../../widgets/common.dart';
@@ -61,6 +62,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     super.didChangeDependencies();
     final wasVisible = _visible;
     _visible = Visibility.of(context);
+    // Messages land in the thread live while this tab is up; no banner needed.
+    context.read<PushService>().setMuted('chat.', _visible);
     if (_visible && !wasVisible) {
       // Defer: we may be mid-build of the shell.
       WidgetsBinding.instance.addPostFrameCallback((_) => _becameVisible());
@@ -75,6 +78,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    context.read<PushService>().setMuted('chat.', false);
     WidgetsBinding.instance.removeObserver(this);
     _sub?.cancel();
     _scroll.dispose();

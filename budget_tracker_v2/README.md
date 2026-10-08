@@ -111,6 +111,9 @@ Settings read from the environment, falling back to dev-friendly defaults so
 | `DJANGO_DB_PATH` | `BASE_DIR/db.sqlite3` | SQLite location, ignored when `DATABASE_URL` is set |
 | `DJANGO_CONN_MAX_AGE` | `600` | Postgres connection reuse, seconds |
 | `REDIS_URL` | unset | Channels layer; falls back to in-memory when unset |
+| `FCM_CREDENTIALS_FILE` | unset | Firebase service-account JSON key; unset means no mobile push notifications |
+| `APK_PATH` | `BASE_DIR/releases/homebudget.apk` | Android build served from `/download/` |
+| `APK_VERSION` | empty | Version shown on the download page, e.g. `1.0.0 (3)` |
 
 Local development still uses SQLite with zero configuration — set `DATABASE_URL`
 only where you want Postgres.
@@ -125,6 +128,74 @@ so data entered on the phone behaves exactly like data entered in the browser.
 ```bash
 python manage.py test budget_app     # includes tests_api.py
 ```
+
+### Push notifications
+
+`/ws/notify/` only reaches an app that is open, so money requests, approvals and
+chat messages are *also* sent through Firebase Cloud Messaging
+(`budget_app/push.py`) to the device tokens the app registers at
+`POST /api/v1/devices/`. That is what makes a notification pop up on the phone
+while the app is closed.
+
+To turn it on:
+
+1. In the [Firebase console](https://console.firebase.google.com/), create a
+   project and add an Android app with package name
+   `tz.co.hotone.homebudget_mobile` (and an iOS app, if you ship to iOS).
+2. Project settings → Service accounts → **Generate new private key**. Put the
+   JSON somewhere only the service user can read, e.g.
+   `/opt/homebudget/fcm-service-account.json` (chmod 600), and point
+   `FCM_CREDENTIALS_FILE` at it in `/opt/homebudget/.env`.
+3. `pip install -r requirements.txt` (adds `google-auth` and `requests`) and
+   restart `homebudget.service`.
+4. Build the app with the matching `google-services.json` — see
+   `../mobile/README.md`.
+
+Without `FCM_CREDENTIALS_FILE` everything else works exactly as before; the push
+calls become no-ops. Delivery happens on a background thread, so a slow or
+unreachable Firebase never delays a request, and tokens Firebase reports as
+unregistered are deleted automatically.
+
+### Publishing the Android app
+
+`/download/` is a public landing page — no account needed, so someone who was
+just invited can install the app first — with a download button, the build's
+version, size and date, and the three install steps Android requires.
+`/download/app.apk` serves the file itself. Both are skipped gracefully when no
+build has been uploaded: the page says so and the file 404s.
+
+To publish a build:
+
+```bash
+cd mobile
+flutter build apk --release
+scp build/app/outputs/flutter-apk/app-release.apk     server:/opt/homebudget/releases/homebudget.apk
+```
+
+Then set `APK_PATH=/opt/homebudget/releases/homebudget.apk` and bump
+`APK_VERSION` in `/opt/homebudget/.env`, and restart `homebudget.service`. The
+APK lives outside the code tree so a redeploy never clobbers it, and
+`releases/` plus `*.apk` are in `.gitignore` — a release build is ~25 MB of
+build output and does not belong in git.
+
+Two things worth knowing:
+
+- The release APK is still signed with Flutter's **debug key** (see
+  `mobile/README.md`). It installs fine by sideloading, but once you switch to a
+  real upload keystore, everyone has to uninstall before the new build will
+  install over it. Create the keystore before you hand the link to anyone you
+  can't ask to reinstall.
+- Django streams the file with `FileResponse`, which ties up a worker for the
+  duration. That is fine at household scale; if the link ever goes wide, let
+  nginx serve it directly instead:
+
+  ```nginx
+  location = /download/app.apk {
+      alias /opt/homebudget/releases/homebudget.apk;
+      default_type application/vnd.android.package-archive;
+      add_header Content-Disposition 'attachment; filename="home-budget.apk"';
+  }
+  ```
 
 ## Production deployment
 

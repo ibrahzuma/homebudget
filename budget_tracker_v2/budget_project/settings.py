@@ -170,6 +170,19 @@ REST_FRAMEWORK = {
     'NUM_PROXIES': 1 if not DEBUG else None,
 }
 
+# The Android APK served from /download/. Kept outside the code tree in
+# production so a redeploy never clobbers it, and out of git either way
+# (a release APK is ~25 MB of build output). Upload a new build with:
+#   scp mobile/build/app/outputs/flutter-apk/app-release.apk #       server:/opt/homebudget/releases/homebudget.apk
+APK_PATH = os.environ.get('APK_PATH') or (BASE_DIR / 'releases' / 'homebudget.apk')
+# Shown on the download page when set, e.g. '1.0.0 (3)'.
+APK_VERSION = os.environ.get('APK_VERSION', '')
+
+# Mobile push notifications (Firebase Cloud Messaging). Path to a Firebase
+# service-account JSON key; unset means the app never sends push, which is the
+# right behaviour for local dev and for a web-only deployment. See budget_app/push.py.
+FCM_CREDENTIALS_FILE = os.environ.get('FCM_CREDENTIALS_FILE', '')
+
 LOGIN_URL = 'login'
 LOGIN_REDIRECT_URL = 'dashboard'
 LOGOUT_REDIRECT_URL = 'login'

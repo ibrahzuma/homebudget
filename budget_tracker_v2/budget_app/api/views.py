@@ -31,7 +31,7 @@ from ..forms import (
 )
 from ..models import (
     AgreementItem, Alert, Asset, Budget, Category, CategoryRule, Currency,
-    ExchangeRate, Goal, GoalContribution, HouseholdInvitation, Liability,
+    DeviceToken, ExchangeRate, Goal, GoalContribution, HouseholdInvitation, Liability,
     LiabilityPayment, Meeting, MoneyRequest, Project, Receivable,
     ReceivablePayment, RecurringTransaction, Transaction,
 )
@@ -106,7 +106,56 @@ class SignupView(APIView):
 
 class LogoutView(APIView):
     def post(self, request):
+        # Drop this phone's push registration too, or it would keep receiving
+        # notifications for an account that is no longer signed in on it.
+        device = (request.data.get('device_token') or '').strip()
+        if device:
+            DeviceToken.objects.filter(token=device).delete()
         Token.objects.filter(user=request.user).delete()
+        return no_content()
+
+
+# ============================================================
+# PUSH DEVICES
+# ============================================================
+
+def _device_token_param(request):
+    token = (request.data.get('token') or '').strip()
+    if not token:
+        raise ValidationError({'token': ['This field is required.']})
+    if len(token) > 255:
+        raise ValidationError({'token': ['That token is too long.']})
+    return token
+
+
+class DeviceRegisterView(APIView):
+    """Register this install's FCM token so the server can push to it.
+
+    The app calls this after sign-in and whenever Firebase rotates the token.
+    A token belongs to one account at a time, so re-registering one that is
+    already on file moves it to the caller (shared phone, or a sign-out that
+    never reached the server).
+    """
+
+    def post(self, request):
+        token = _device_token_param(request)
+        platform = (request.data.get('platform') or '').strip().lower()
+        valid = dict(DeviceToken.PLATFORM_CHOICES)
+        if platform not in valid:
+            raise ValidationError({'platform': [f"Must be one of: {', '.join(valid)}."]})
+        DeviceToken.objects.update_or_create(
+            token=token,
+            defaults={'user': request.user, 'platform': platform},
+        )
+        return no_content()
+
+
+class DeviceUnregisterView(APIView):
+    """Stop pushing to this install (sign-out, or notifications turned off)."""
+
+    def post(self, request):
+        token = _device_token_param(request)
+        DeviceToken.objects.filter(token=token, user=request.user).delete()
         return no_content()
 
 

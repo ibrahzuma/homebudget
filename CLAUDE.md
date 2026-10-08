@@ -25,6 +25,7 @@ homebudget/
         ├── services.py                ← business logic + household actions shared by web & API
         ├── api/                       ← DRF token-auth JSON API for the mobile app (/api/v1/)
         ├── ws_auth.py                 ← WebSocket `Authorization: Token` auth (mobile)
+        ├── push.py                    ← FCM sender: notifications while the mobile app is closed
         ├── middleware.py              ← AutoApplyRecurringMiddleware (per-session-day cron)
         ├── context_processors.py      ← household_context (household, currency, badge counts)
         ├── urls.py                    ← all app URLs
@@ -59,6 +60,7 @@ Sign up at `/signup/`, then `/household/setup/` to create the household. `seed_h
 | `Alert` | Optional `user` (null = household-wide). info/warning/danger. |
 | `MoneyRequest` | pending/approved/rejected/cancelled. On approval: atomically creates paired income+expense transactions. |
 | `Asset`, `Liability`, `NetWorthSnapshot` | Net worth tracking with optional periodic snapshots. |
+| `DeviceToken` | One FCM registration token per mobile install. Belongs to a *user*, not a household. |
 
 Important invariants:
 - **All aggregation uses `Transaction.amount_base`** — never sum `amount` directly across mixed currencies.
@@ -93,7 +95,7 @@ shared the same way.
 
 ## URL map (`budget_app/urls.py`)
 
-Auth (`/login/`, `/logout/`) and `/admin/` live in `budget_project/urls.py`. Everything else is in `budget_app/urls.py`: dashboard `/`, `/signup/`, `/household/{setup,settings}/`, CRUD for `/transactions/`, `/categories/`, `/budgets/`, `/recurring/` (+ `/recurring/run-now/`), `/rules/` (+ `/rules/apply/`), `/alerts/`, `/requests/`, `/networth/` (+ `/assets/`, `/liabilities/`, `/networth/snapshot/`), `/currencies/` (+ `/currencies/rates/new/`), `/import/csv/` & `/export/csv/`, `/forecast/`, `/calendar/`.
+Auth (`/login/`, `/logout/`) and `/admin/` live in `budget_project/urls.py`. Everything else is in `budget_app/urls.py`: dashboard `/`, `/signup/`, `/download/` + `/download/app.apk` (**public** — the Android APK landing page, served from `APK_PATH` outside the repo), `/household/{setup,settings}/`, CRUD for `/transactions/`, `/categories/`, `/budgets/`, `/recurring/` (+ `/recurring/run-now/`), `/rules/` (+ `/rules/apply/`), `/alerts/`, `/requests/`, `/networth/` (+ `/assets/`, `/liabilities/`, `/networth/snapshot/`), `/currencies/` (+ `/currencies/rates/new/`), `/import/csv/` & `/export/csv/`, `/forecast/`, `/calendar/`.
 
 ## Mobile API (`budget_app/api/`)
 
@@ -105,8 +107,20 @@ Reference: `docs/mobile-api.md`. Design rules:
 - Output is shaped by plain functions in `api/serializers.py`; money is always a decimal string.
 - Every view subclasses `HouseholdAPIView` (resolves `self.household`, 409 if none,
   runs the once-a-day recurring/alert catch-up that the session middleware can't do for token clients).
-- Tests: `budget_app/tests_api.py` (API, WebSocket token auth, and web-view regression tests).
+- Tests: `budget_app/tests_api.py` (API, WebSocket token auth, push, and web-view regression tests).
 - The WebSocket accepts either the session cookie or an `Authorization: Token` header (`ws_auth.py`).
+
+**Push notifications.** `services.push_to_household(household, payload, notify=...,
+exclude_user=...)` is the single fan-out point: the `payload` goes to connected
+WebSockets as before, and passing `notify={'title','body','thread_id'}` *also*
+sends it through FCM (`push.py`) so it pops up while the app is closed. Today
+that is money requests, approve/reject and chat. Recipients are the payload's
+`for_user_id`, else every member bar `exclude_user`. Delivery runs on a daemon
+thread and no-ops entirely unless `FCM_CREDENTIALS_FILE` points at a Firebase
+service-account key, so dev and tests are unaffected. Devices register at
+`POST /api/v1/devices/`; the Android channel id `homebudget_default` is repeated
+in `push.py`, `mobile/lib/core/push.dart` and the Android manifest and must stay
+in sync. Setup steps: `mobile/README.md` and `budget_tracker_v2/README.md`.
 
 ## Stack
 
@@ -128,7 +142,7 @@ hosts four unrelated sites on ports 8001–8004 — don't touch their nginx conf
 
 `settings.py` is env-driven (`DATABASE_URL`, `DJANGO_SECRET_KEY`, `DJANGO_DEBUG`,
 `DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS`, `DJANGO_SECURE_COOKIES`,
-`DJANGO_DB_PATH`, `DJANGO_CONN_MAX_AGE`, `REDIS_URL`) with dev defaults preserved,
+`DJANGO_DB_PATH`, `DJANGO_CONN_MAX_AGE`, `REDIS_URL`, `FCM_CREDENTIALS_FILE`) with dev defaults preserved,
 so `runserver` still works with no environment set. `DATABASE_URL` is parsed by a
 small local helper rather than pulling in dj-database-url.
 

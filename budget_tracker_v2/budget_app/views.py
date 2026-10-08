@@ -3,10 +3,11 @@ from decimal import Decimal
 
 from django.contrib import messages
 from django.contrib.auth import login
+from django.contrib.auth import views as auth_views
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.db.models import Sum, Q
-from django.http import HttpResponse, JsonResponse
+from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
 from django.utils import timezone
@@ -42,6 +43,7 @@ from .services import (
     save_networth_snapshot, save_exchange_rate, snapshot_meeting_state,
     carry_over_open_items, suggest_next_meeting_date, normalize_agreement_completion,
     quick_update_agreement, mark_chat_read, send_chat_message,
+    mobile_app_release,
     write_transactions_csv, import_transactions_csv,
     dashboard_summary, calendar_month, monthly_report_data,
 )
@@ -268,6 +270,7 @@ def dashboard(request):
     household = get_user_household(request.user)
     context = dashboard_summary(household, request.user)
     context['household'] = household
+    context['apk'] = mobile_app_release()
     return render(request, 'budget_app/dashboard.html', context)
 
 
@@ -1670,3 +1673,47 @@ def monthly_report_csv(request, year, month):
     ).select_related('user', 'category', 'currency', 'project').order_by('date')
     write_transactions_csv(response, qs, include_project=True)
     return response
+
+
+# ============================================================
+# ANDROID APP DOWNLOAD (public)
+# ============================================================
+
+class AppLoginView(auth_views.LoginView):
+    """Django's login view plus the published APK, so the sign-in page can
+    offer the Android download. Looked up per request, not at import time, so
+    uploading a build is picked up without a restart."""
+    template_name = 'budget_app/login.html'
+
+    def get_context_data(self, **kwargs):
+        return super().get_context_data(**kwargs) | {'apk': mobile_app_release()}
+
+
+def app_download(request):
+    """Public landing page for the Android app.
+
+    Deliberately outside @login_required: the point is that someone who has
+    just been invited can install the app before they have an account.
+    """
+    return render(request, 'budget_app/app_download.html', {
+        'release': mobile_app_release(),
+    })
+
+
+def app_download_file(request):
+    """Serve the APK itself.
+
+    Streams from disk via FileResponse. If the file ever grows enough for that
+    to matter, nginx can take the route over with an `alias` — see the README.
+    """
+    release = mobile_app_release()
+    if not release['available']:
+        raise Http404('No build has been uploaded yet.')
+    version = release['version'].split()[0] if release['version'] else ''
+    name = f"home-budget-{version}.apk" if version else 'home-budget.apk'
+    return FileResponse(
+        open(release['path'], 'rb'),
+        as_attachment=True,
+        filename=name,
+        content_type='application/vnd.android.package-archive',
+    )

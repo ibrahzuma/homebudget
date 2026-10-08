@@ -985,3 +985,40 @@ class NetWorthSnapshot(models.Model):
 
     def __str__(self):
         return f"Snapshot {self.snapshot_date}: {self.net_worth}"
+
+
+# ============================================================
+# PUSH NOTIFICATIONS (mobile devices)
+# ============================================================
+
+class DeviceToken(models.Model):
+    """An FCM registration token for one install of the mobile app.
+
+    The WebSocket in ``consumers.py`` only reaches an app that is running; a
+    notification that has to appear while the app is backgrounded or closed has
+    to go out through Firebase instead (see ``push.py``).
+
+    Tokens belong to a *user*, not a household: one person may have several
+    devices, and a token belongs to exactly one account, so re-registering the
+    same token under a different login moves it rather than duplicating it.
+    Tokens Firebase reports as unregistered are deleted automatically.
+    """
+    PLATFORM_ANDROID = 'android'
+    PLATFORM_IOS = 'ios'
+    PLATFORM_CHOICES = [
+        (PLATFORM_ANDROID, 'Android'),
+        (PLATFORM_IOS, 'iOS'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='device_tokens')
+    token = models.CharField(max_length=255, unique=True)
+    platform = models.CharField(max_length=10, choices=PLATFORM_CHOICES,
+                                default=PLATFORM_ANDROID)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_seen_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-last_seen_at']
+
+    def __str__(self):
+        return f"{self.user.username} · {self.platform} · {self.token[:12]}…"

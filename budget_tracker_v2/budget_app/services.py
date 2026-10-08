@@ -14,18 +14,36 @@ from django.utils import timezone
 # Real-time push (Django Channels)
 # ============================================================
 
-def push_to_household(household, payload):
-    """Fan an event out to every WebSocket connected to this household.
+def push_to_household(household, payload, notify=None, exclude_user=None):
+    """Fan an event out to this household over the WebSocket, and optionally
+    as an OS-level notification on the members' phones.
 
     `payload` should be a JSON-serialisable dict with at minimum {'kind': '...'}
-    so the JS client can route the message. Safe to call from any sync code —
-    no-ops cleanly if Channels isn't configured.
+    so the JS and Flutter clients can route the message. It reaches every
+    *connected* client — i.e. only an app that is open and running.
+
+    Pass `notify={'title': ..., 'body': ...}` for anything that should also show
+    up while the mobile app is backgrounded or closed; that goes out through
+    Firebase (`push.py`). Its recipients are the member named by the payload's
+    `for_user_id`, or — when the event addresses the whole household — every
+    member except `exclude_user` (normally whoever caused it).
+
+    Safe to call from any sync code: both halves no-op cleanly when Channels or
+    Firebase isn't configured, and neither can break the calling request.
     """
+    if not household:
+        return
+    _push_websocket(household, payload)
+    if notify:
+        _push_devices(household, payload, notify, exclude_user)
+
+
+def _push_websocket(household, payload):
     try:
         from channels.layers import get_channel_layer
         from asgiref.sync import async_to_sync
         layer = get_channel_layer()
-        if not layer or not household:
+        if not layer:
             return
         async_to_sync(layer.group_send)(
             f'household_{household.id}',
@@ -33,6 +51,36 @@ def push_to_household(household, payload):
         )
     except Exception:
         # Don't ever break a request because the push failed (e.g. dev without channels).
+        pass
+
+
+# Payload keys worth carrying into the notification: they are what the app
+# reads to decide which screen to open when the notification is tapped.
+_PUSH_DATA_KEYS = ('kind', 'link', 'request_id', 'id', 'sender_id')
+
+
+def _push_devices(household, payload, notify, exclude_user):
+    try:
+        from . import push
+        if not push.is_configured():
+            return
+        recipients = household.members.all()
+        target_id = payload.get('for_user_id')
+        if target_id:
+            recipients = recipients.filter(pk=target_id)
+        elif exclude_user is not None:
+            recipients = recipients.exclude(pk=getattr(exclude_user, 'pk', exclude_user))
+        user_ids = list(recipients.values_list('pk', flat=True))
+        if not user_ids:
+            return
+        push.send_to_users(
+            user_ids,
+            notify['title'],
+            notify['body'],
+            data={k: payload[k] for k in _PUSH_DATA_KEYS if k in payload},
+            thread_id=notify.get('thread_id'),
+        )
+    except Exception:
         pass
 
 from .models import (
@@ -516,6 +564,10 @@ def notify_money_request_created(money_request):
         'level': 'info',
         'for_user_id': money_request.approver_id,
         'request_id': money_request.pk,
+    }, notify={
+        'title': f"Money request from {requester.username}",
+        'body': f"{symbol}{money_request.amount} for {money_request.purpose}",
+        'thread_id': f'request-{money_request.pk}',
     })
 
 
@@ -561,6 +613,10 @@ def approve_money_request(money_request, note=''):
         'level': 'success',
         'for_user_id': money_request.requester_id,
         'request_id': money_request.pk,
+    }, notify={
+        'title': f"Request approved by {approver.username}",
+        'body': f"{money_request.purpose} — approved.",
+        'thread_id': f'request-{money_request.pk}',
     })
 
 
@@ -585,6 +641,10 @@ def reject_money_request(money_request, note=''):
         'level': 'warning',
         'for_user_id': money_request.requester_id,
         'request_id': money_request.pk,
+    }, notify={
+        'title': f"Request rejected by {approver.username}",
+        'body': f"{money_request.purpose} — rejected." + (f" {note}" if note else ''),
+        'thread_id': f'request-{money_request.pk}',
     })
 
 
@@ -871,8 +931,45 @@ def send_chat_message(household, user, body):
         'body': msg.body,
         'created_at': msg.created_at.isoformat(),
         'created_at_display': timezone.localtime(msg.created_at).strftime('%b %d, %H:%M'),
-    })
+    }, notify={
+        'title': msg.sender.username,
+        'body': msg.body,
+        # One chat notification per conversation, replaced by the next message,
+        # rather than a separate one per line.
+        'thread_id': f'chat-{household.id}',
+    }, exclude_user=user)
     return msg
+
+
+# -------- Android app download --------
+
+def mobile_app_release():
+    """What the /download/ page needs to know about the published APK.
+
+    The file is build output, so it lives outside the repo (``APK_PATH``) and
+    may simply not be there — on a fresh checkout, or before the first upload.
+    The page handles that case rather than erroring, so `available` is the only
+    key a caller must check.
+    """
+    from datetime import timezone as dt_timezone
+    from pathlib import Path
+    from django.conf import settings
+
+    path = Path(settings.APK_PATH)
+    try:
+        stat = path.stat()
+    except OSError:
+        return {'available': False, 'path': path, 'filename': path.name,
+                'size_mb': None, 'built_at': None, 'version': ''}
+    built = datetime.fromtimestamp(stat.st_mtime, tz=dt_timezone.utc)
+    return {
+        'available': True,
+        'path': path,
+        'filename': path.name,
+        'size_mb': round(stat.st_size / (1024 * 1024), 1),
+        'built_at': timezone.localtime(built),
+        'version': settings.APK_VERSION,
+    }
 
 
 def badge_counts(household, user):

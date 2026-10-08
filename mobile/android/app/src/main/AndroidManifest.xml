@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Talks to https://budget.hotone.co.tz (REST + WebSocket) -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Money-request and chat notifications (asked for at sign-in on Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="Home Budget"
         android:name="${applicationName}"
@@ -27,6 +29,15 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Channel for pushed notifications. Must match ANDROID_CHANNEL_ID in
+             budget_app/push.py and the channel created in lib/core/push.dart:
+             Android drops a notification aimed at a channel that doesn't exist. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="homebudget_default" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@mipmap/ic_launcher" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
