@@ -136,6 +136,7 @@ class _Details extends StatelessWidget {
           txn.currency == null ? session.currencyCode : '${txn.currency!.code} · ${txn.currency!.name}'),
       (Icons.account_balance_wallet_outlined, 'In ${session.currencyCode}',
           txn.amountBase == null ? 'No exchange rate' : fmtMoney(txn.amountBase, symbol: sym)),
+      (Icons.account_balance_wallet_outlined, 'Account', txn.account?.name ?? '—'),
       (Icons.bookmark_outline, 'Project', txn.project?.name ?? '—'),
       (Icons.input_outlined, 'Source', source),
       (Icons.person_outline, 'Added by', txn.user.username),

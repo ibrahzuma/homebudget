@@ -47,6 +47,12 @@ Future<bool> openTransactionForm(BuildContext context,
     if (existing?.project != null && !meta.projects.any((p) => p.id == existing!.project!.id))
       Option(existing!.project!.id, existing.project!.name),
   ];
+  // Accounts are active-only in meta; keep an existing (possibly inactive) link.
+  final accounts = [
+    for (final a in meta.accounts) Option(a.id, a.name),
+    if (existing?.account != null && !meta.accounts.any((a) => a.id == existing!.account!.id))
+      Option(existing!.account!.id, existing.account!.name),
+  ];
   final initialType = existing?.type ?? type;
 
   final form = EntityFormScreen(
@@ -62,6 +68,7 @@ Future<bool> openTransactionForm(BuildContext context,
       'description': existing?.description,
       'date': existing?.date ?? DateTime.now(),
       'project': existing?.project?.id,
+      'account': existing?.account?.id,
     },
     fields: [
       FieldSpec.select('transaction_type', 'Type', options: typeOptions(meta), required: true),
@@ -81,6 +88,9 @@ Future<bool> openTransactionForm(BuildContext context,
       const FieldSpec.text('payee', 'Payee', hint: 'e.g. TotalEnergies, Shoprite'),
       const FieldSpec.text('description', 'Description', hint: 'Optional notes'),
       const FieldSpec.date('date', 'Date', required: true),
+      if (accounts.isNotEmpty)
+        FieldSpec.select('account', 'Account', options: accounts,
+            help: 'Which bank or mobile-money account this moved through.'),
       if (projects.isNotEmpty) FieldSpec.select('project', 'Project', options: projects),
     ],
     onSubmit: (values) async {

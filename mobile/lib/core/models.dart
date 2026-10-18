@@ -65,6 +65,71 @@ class ProjectBrief {
   final String icon;
 }
 
+class AccountBrief {
+  AccountBrief.fromJson(Map<String, dynamic> j)
+      : id = j['id'] as int,
+        name = j['name'] as String,
+        accountType = j['account_type'] as String,
+        provider = j['provider'] as String? ?? '',
+        color = j['color'] as String? ?? '#0d6efd',
+        icon = j['icon'] as String? ?? 'bi-wallet2';
+  final int id;
+  final String name;
+  final String accountType; // bank | mobile_money | cash
+  final String provider;
+  final String color;
+  final String icon;
+}
+
+/// A bank account or mobile-money wallet, with its live derived balance.
+class Account {
+  Account.fromJson(Map<String, dynamic> j)
+      : id = j['id'] as int,
+        name = j['name'] as String,
+        accountType = j['account_type'] as String,
+        accountTypeDisplay = j['account_type_display'] as String? ?? '',
+        provider = j['provider'] as String? ?? '',
+        providerDisplay = j['provider_display'] as String? ?? '',
+        isMobileMoney = j['is_mobile_money'] as bool? ?? false,
+        accountNumber = j['account_number'] as String? ?? '',
+        currency = _opt(j['currency'], Currency.fromJson),
+        openingBalance = _d0(j['opening_balance']),
+        balance = _d0(j['balance']),
+        icon = j['icon'] as String? ?? 'bi-wallet2',
+        color = j['color'] as String? ?? '#0d6efd',
+        isActive = j['is_active'] as bool? ?? true,
+        notes = j['notes'] as String? ?? '',
+        raw = j;
+  final int id;
+  final String name;
+  final String accountType;
+  final String accountTypeDisplay;
+  final String provider;
+  final String providerDisplay;
+  final bool isMobileMoney;
+  final String accountNumber;
+  final Currency? currency;
+  final double openingBalance;
+  final double balance;
+  final String icon;
+  final String color;
+  final bool isActive;
+  final String notes;
+  final Map<String, dynamic> raw;
+}
+
+/// GET accounts/: every account plus base-currency totals.
+class AccountsOverview {
+  AccountsOverview.fromJson(Map<String, dynamic> j)
+      : accounts = _list(j['accounts'], Account.fromJson),
+        totalBase = _d0(j['total_base']),
+        byType = (j['by_type'] as Map<String, dynamic>? ?? {})
+            .map((k, v) => MapEntry(k, _d0(v)));
+  final List<Account> accounts;
+  final double totalBase;
+  final Map<String, double> byType;
+}
+
 class Household {
   Household({
     required this.id,
@@ -151,12 +216,14 @@ class Meta {
         categories = _list(j['categories'], CategoryBrief.fromJson),
         members = _list(j['members'], UserBrief.fromJson),
         projects = _list(j['projects'], ProjectBrief.fromJson),
+        accounts = _list(j['accounts'], AccountBrief.fromJson),
         choices = (j['choices'] as Map<String, dynamic>).map(
             (k, v) => MapEntry(k, _list(v, Choice.fromJson)));
   final List<Currency> currencies;
   final List<CategoryBrief> categories;
   final List<UserBrief> members;
   final List<ProjectBrief> projects;
+  final List<AccountBrief> accounts;
   final Map<String, List<Choice>> choices;
 
   List<Choice> choicesFor(String key) => choices[key] ?? const [];
@@ -182,7 +249,8 @@ class Txn {
         source = j['source'] as String,
         user = UserBrief.fromJson(j['user'] as Map<String, dynamic>),
         category = _opt(j['category'], CategoryBrief.fromJson),
-        project = _opt(j['project'], ProjectBrief.fromJson);
+        project = _opt(j['project'], ProjectBrief.fromJson),
+        account = _opt(j['account'], AccountBrief.fromJson);
   final int id;
   final String type;
   final double amount;
@@ -196,6 +264,7 @@ class Txn {
   final UserBrief user;
   final CategoryBrief? category;
   final ProjectBrief? project;
+  final AccountBrief? account;
 
   bool get isIncome => type == 'income';
   String get title => payee.isNotEmpty
@@ -256,6 +325,7 @@ class Recurring {
         autoCreate = j['auto_create'] as bool,
         isActive = j['is_active'] as bool,
         notes = j['notes'] as String? ?? '',
+        account = _opt(j['account'], AccountBrief.fromJson),
         raw = j;
   final int id;
   final String name;
@@ -272,6 +342,7 @@ class Recurring {
   final bool autoCreate;
   final bool isActive;
   final String notes;
+  final AccountBrief? account;
   final Map<String, dynamic> raw;
 }
 
@@ -764,7 +835,8 @@ class Dashboard {
         nextMeeting = _opt(j['next_meeting'], Meeting.fromJson),
         totalLentOut = _d0(j['total_lent_out']),
         totalOwed = _d0(j['total_owed']),
-        overdueLent = j['overdue_lent'] as int;
+        overdueLent = j['overdue_lent'] as int,
+        accounts = _opt(j['accounts'], AccountsOverview.fromJson);
   final String monthLabel;
   final double totalIncome;
   final double totalExpense;
@@ -781,6 +853,7 @@ class Dashboard {
   final double totalLentOut;
   final double totalOwed;
   final int overdueLent;
+  final AccountsOverview? accounts;
 }
 
 class CalendarBill {

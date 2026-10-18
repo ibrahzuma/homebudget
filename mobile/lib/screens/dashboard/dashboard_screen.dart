@@ -127,6 +127,8 @@ class _DashboardBody extends StatelessWidget {
         if (d.members.length > 1) MemberSplitCard(members: d.members, data: d),
         ForecastCard(forecast: d.forecast),
         if (d.nextMeeting != null) NextMeetingCard(meeting: d.nextMeeting!),
+        if (d.accounts != null && d.accounts!.accounts.isNotEmpty)
+          AccountsCard(data: d.accounts!),
         NetWorthCard(data: d),
         BudgetsSection(budgets: d.budgets),
         GoalsSection(goals: d.activeGoals),

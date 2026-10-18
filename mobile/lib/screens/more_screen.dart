@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../core/config.dart';
 import '../core/session.dart';
 import '../widgets/common.dart';
+import 'accounts/accounts_screen.dart';
 import 'alerts/alerts_screen.dart';
 import 'budgets/budgets_screen.dart';
 import 'calendar/calendar_screen.dart';
@@ -64,6 +65,7 @@ class MoreScreen extends StatelessWidget {
           item(Icons.savings_outlined, 'Savings goals', const GoalsScreen()),
           item(Icons.bookmark_outline, 'Projects', const ProjectsScreen()),
           const SectionHeader('Wealth'),
+          item(Icons.account_balance_wallet_outlined, 'Accounts', const AccountsScreen()),
           item(Icons.groups_outlined, 'Vikoba & Mchezo', const GroupsScreen()),
           item(Icons.account_balance_outlined, 'Net worth & assets', const NetWorthScreen()),
           item(Icons.credit_card, 'Debts', const DebtsScreen()),

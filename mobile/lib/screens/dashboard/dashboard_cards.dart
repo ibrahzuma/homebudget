@@ -7,6 +7,7 @@ import '../../core/format.dart';
 import '../../core/models.dart';
 import '../../core/session.dart';
 import '../../widgets/common.dart';
+import '../accounts/accounts_screen.dart';
 import '../budgets/budgets_screen.dart';
 import '../debts/debts_screen.dart';
 import '../forecast/forecast_screen.dart';
@@ -442,6 +443,58 @@ class NetWorthCard extends StatelessWidget {
             ),
           ),
         ]),
+      ),
+    ]);
+  }
+}
+
+/// Each bank / mobile-money account and what it holds. Hidden when there are none.
+class AccountsCard extends StatelessWidget {
+  const AccountsCard({super.key, required this.data});
+  final AccountsOverview data;
+
+  @override
+  Widget build(BuildContext context) {
+    final sym = _sym(context);
+    final t = Theme.of(context).textTheme;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      SectionHeader('Accounts',
+          trailing: _HeaderLink('Manage', () => push(context, const AccountsScreen()))),
+      Card(
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => push(context, const AccountsScreen()),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Row(children: [
+                Expanded(
+                  child: Text('Total across accounts', style: _muted(context)),
+                ),
+                Text(fmtMoney(data.totalBase, symbol: sym),
+                    style: t.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+              ]),
+              for (final a in data.accounts) ...[
+                const Divider(height: 18),
+                Row(children: [
+                  IconBadge(iconData: accountIcon(a), color: a.color, size: 34),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(a.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: t.bodyMedium),
+                  ),
+                  Text(fmtIn(a.balance, a.currency, sym),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: a.balance < 0 ? AppColors.expense : null,
+                      )),
+                ]),
+              ],
+            ]),
+          ),
+        ),
       ),
     ]);
   }
