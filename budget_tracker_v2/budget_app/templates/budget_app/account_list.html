@@ -1,0 +1,98 @@
+{% extends 'budget_app/base.html' %}
+{% load humanize %}
+{% block title %}Accounts{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <div>
+        <h2 class="mb-0"><i class="bi bi-wallet2 text-primary"></i> Accounts</h2>
+        <small class="text-muted">Bank accounts and mobile-money wallets (M-Pesa, Mixx by Yas, Halopesa&hellip;) &mdash; balances update as you record transactions.</small>
+    </div>
+    <a href="{% url 'account_create' %}" class="btn btn-primary"><i class="bi bi-plus-lg"></i> Add Account</a>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-5">
+        <div class="card stat-card p-3 h-100">
+            <small class="text-muted">Total across accounts</small>
+            <div class="stat-value text-primary">{{ currency_symbol }}{{ overview.total_base|floatformat:2|intcomma }}</div>
+            <small class="text-muted">In {{ currency_code }}, converting other currencies at your saved rates.</small>
+        </div>
+    </div>
+    <div class="col-md-7">
+        <div class="card stat-card p-3 h-100">
+            <small class="text-muted d-block mb-2">By type</small>
+            {% for type_label, amount in overview.by_type.items %}
+            <div class="d-flex justify-content-between">
+                <span>{{ type_label }}</span>
+                <strong>{{ currency_symbol }}{{ amount|floatformat:2|intcomma }}</strong>
+            </div>
+            {% empty %}
+            <span class="text-muted">No active accounts yet.</span>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<div class="row g-3">
+    {% for row in accounts %}
+    <div class="col-md-6 col-xl-4">
+        <div class="card p-3 h-100 {% if not row.account.is_active %}opacity-50{% endif %}">
+            <div class="d-flex align-items-start justify-content-between">
+                <div class="d-flex align-items-center gap-2">
+                    <div class="stat-icon" style="background: {{ row.account.color }}1a; color: {{ row.account.color }};">
+                        <i class="bi {{ row.account.icon|default:'bi-wallet2' }}"></i>
+                    </div>
+                    <div>
+                        <div class="fw-bold">{{ row.account.name }}</div>
+                        <small class="text-muted">
+                            {{ row.account.get_account_type_display }}{% if row.account.provider %} · {{ row.account.get_provider_display }}{% endif %}
+                        </small>
+                    </div>
+                </div>
+                <div class="dropdown">
+                    <button class="btn btn-sm btn-light" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="bi bi-three-dots-vertical"></i>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                        <li><a class="dropdown-item" href="{% url 'account_edit' row.account.pk %}"><i class="bi bi-pencil me-2"></i>Edit</a></li>
+                        <li><a class="dropdown-item" href="{% url 'transaction_list' %}?account={{ row.account.pk }}"><i class="bi bi-list-ul me-2"></i>Transactions</a></li>
+                        <li><a class="dropdown-item text-danger" href="{% url 'account_delete' row.account.pk %}"><i class="bi bi-trash me-2"></i>Delete</a></li>
+                    </ul>
+                </div>
+            </div>
+            <div class="mt-3">
+                <small class="text-muted">Balance</small>
+                <div class="stat-value {% if row.balance < 0 %}text-danger{% else %}text-success{% endif %}">
+                    {{ row.account.currency.symbol|default:currency_symbol }}{{ row.balance|floatformat:2|intcomma }}
+                </div>
+            </div>
+            {% if row.account.account_number %}
+            <small class="text-muted mt-2"><i class="bi bi-hash"></i>{{ row.account.account_number }}</small>
+            {% endif %}
+            {% if not row.account.is_active %}<span class="badge bg-secondary mt-2 align-self-start">Inactive</span>{% endif %}
+        </div>
+    </div>
+    {% empty %}
+    <div class="col-12">
+        <div class="card p-5 text-center text-muted">
+            <i class="bi bi-wallet2 fs-1 d-block mb-3"></i>
+            <h5>No accounts yet</h5>
+            <p class="mb-3">Add your bank accounts and mobile-money wallets to see how much each one holds.</p>
+            <div>
+                <a href="{% url 'account_create' %}" class="btn btn-primary"><i class="bi bi-plus-lg"></i> Add your first account</a>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+{% if accounts %}
+<p class="text-muted small mt-3">
+    <i class="bi bi-info-circle"></i>
+    A balance is the account's opening balance plus income, minus expenses, for every transaction tagged to it.
+    Tag a transaction to an account on the add/edit transaction page.
+</p>
+{% endif %}
+
+{% endblock %}

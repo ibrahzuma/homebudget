@@ -14,7 +14,7 @@ from django.utils import timezone
 
 from .forms import (
     SignUpForm, HouseholdForm, TransactionForm, CategoryForm, BudgetForm,
-    RecurringTransactionForm, CategoryRuleForm, AssetForm, LiabilityForm,
+    RecurringTransactionForm, CategoryRuleForm, AssetForm, AccountForm, LiabilityForm,
     LiabilityPaymentForm,
     MoneyRequestForm, MoneyRequestResponseForm, CSVImportForm,
     CurrencyForm, ExchangeRateForm,
@@ -27,7 +27,7 @@ from .forms import (
 from .models import (
     ContributionGroup, GroupMember,
     Household, Transaction, Category, Budget, RecurringTransaction,
-    CategoryRule, Alert, MoneyRequest, Asset, Liability, LiabilityPayment,
+    CategoryRule, Alert, MoneyRequest, Asset, Account, Liability, LiabilityPayment,
     Currency, ExchangeRate,
     Meeting, AgreementItem, Goal, GoalContribution, Project,
     Receivable, ReceivablePayment,
@@ -44,6 +44,7 @@ from .services import (
     delete_liability_payment, record_goal_contribution, delete_goal_contribution,
     create_receivable, record_receivable_payment, delete_receivable_payment,
     save_networth_snapshot, save_exchange_rate, snapshot_meeting_state,
+    accounts_overview, account_balance,
     carry_over_open_items, suggest_next_meeting_date, normalize_agreement_completion,
     quick_update_agreement, mark_chat_read, send_chat_message,
     mobile_app_release,
@@ -287,7 +288,7 @@ def dashboard(request):
 @ensure_household
 def transaction_list(request):
     household = get_user_household(request.user)
-    transactions = household.transactions.select_related('user', 'category', 'currency').all()
+    transactions = household.transactions.select_related('user', 'category', 'currency', 'account').all()
 
     ttype = request.GET.get('type')
     if ttype in (Transaction.INCOME, Transaction.EXPENSE):
@@ -301,6 +302,10 @@ def transaction_list(request):
     if cat_id:
         transactions = transactions.filter(category_id=cat_id)
 
+    account_id = request.GET.get('account')
+    if account_id:
+        transactions = transactions.filter(account_id=account_id)
+
     q = request.GET.get('q')
     if q:
         transactions = transactions.filter(
@@ -313,6 +318,7 @@ def transaction_list(request):
         'current_type': ttype or '',
         'current_member': member_id or '',
         'current_category': cat_id or '',
+        'current_account': account_id or '',
         'q': q or '',
     })
 
@@ -831,6 +837,78 @@ def asset_delete(request, pk):
         asset.delete()
         return redirect('networth')
     return render(request, 'budget_app/asset_confirm_delete.html', {'asset': asset})
+
+
+# ============================================================
+# ACCOUNTS (bank & mobile-money balances)
+# ============================================================
+
+@login_required
+@ensure_household
+def account_list(request):
+    household = get_user_household(request.user)
+    overview = accounts_overview(household)
+    return render(request, 'budget_app/account_list.html', {
+        'overview': overview,
+        'accounts': overview['accounts'],
+    })
+
+
+@login_required
+@ensure_household
+def account_create(request):
+    household = get_user_household(request.user)
+    if request.method == 'POST':
+        form = AccountForm(request.POST, household=household)
+        if form.is_valid():
+            a = form.save(commit=False)
+            a.household = household
+            if not a.currency:
+                a.currency = household.base_currency
+            a.save()
+            messages.success(request, "Account added.")
+            return redirect('account_list')
+    else:
+        form = AccountForm(household=household, initial={'currency': household.base_currency})
+    return render(request, 'budget_app/account_form.html', {
+        'form': form, 'title': 'Add Account'
+    })
+
+
+@login_required
+@ensure_household
+def account_edit(request, pk):
+    household = get_user_household(request.user)
+    account = get_object_or_404(Account, pk=pk, household=household)
+    if request.method == 'POST':
+        form = AccountForm(request.POST, instance=account, household=household)
+        if form.is_valid():
+            a = form.save(commit=False)
+            if not a.currency:
+                a.currency = household.base_currency
+            a.save()
+            messages.success(request, "Account updated.")
+            return redirect('account_list')
+    else:
+        form = AccountForm(instance=account, household=household)
+    return render(request, 'budget_app/account_form.html', {
+        'form': form, 'title': 'Edit Account', 'account': account
+    })
+
+
+@login_required
+@ensure_household
+def account_delete(request, pk):
+    household = get_user_household(request.user)
+    account = get_object_or_404(Account, pk=pk, household=household)
+    if request.method == 'POST':
+        account.delete()
+        messages.success(request, "Account deleted. Its transactions were kept but are no longer attributed to an account.")
+        return redirect('account_list')
+    return render(request, 'budget_app/account_confirm_delete.html', {
+        'account': account, 'balance': account_balance(account),
+        'tx_count': account.transactions.count(),
+    })
 
 
 @login_required

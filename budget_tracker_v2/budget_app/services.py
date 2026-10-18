@@ -173,6 +173,7 @@ def apply_due_recurring(household=None, today=None):
                 description=r.name + (f" — {r.notes}" if r.notes else ""),
                 payee=r.payee,
                 date=r.next_due_date,
+                account=r.account,
                 source=Transaction.SOURCE_RECURRING,
             )
             apply_category_rules(t)
@@ -399,6 +400,87 @@ def compute_net_worth(household):
         'net_worth': (total_assets + total_receivables - total_liab).quantize(Decimal('0.01')),
         'assets_by_type': by_asset_type,
         'liabilities_by_type': by_liab_type,
+    }
+
+
+# -------- accounts (bank & mobile-money balances) --------
+
+def convert_amount(amount, from_currency, to_currency):
+    """Convert ``amount`` from one Currency to another via ``ExchangeRate``.
+
+    Mirrors the direct-then-inverse logic used by ``Transaction._compute_amount_base``
+    and ``compute_net_worth``. Returns the amount unchanged when either currency
+    is missing, they match, or no rate is on file.
+    """
+    if amount is None:
+        return Decimal('0')
+    amount = Decimal(amount)
+    if not from_currency or not to_currency or from_currency.id == to_currency.id:
+        return amount
+    rate = ExchangeRate.objects.filter(
+        from_currency=from_currency, to_currency=to_currency).first()
+    if rate:
+        return amount * rate.rate
+    inverse = ExchangeRate.objects.filter(
+        from_currency=to_currency, to_currency=from_currency).first()
+    if inverse and inverse.rate:
+        return amount / inverse.rate
+    return amount
+
+
+def account_balance(account):
+    """What an account currently holds, in its own currency.
+
+    ``opening_balance`` + income tagged to it − expense tagged to it. Linked
+    transactions recorded in another currency are converted into the account's
+    currency. One grouped query rather than a row-by-row loop.
+    """
+    total = Decimal(account.opening_balance or 0)
+    rows = (account.transactions
+            .values('currency_id', 'transaction_type')
+            .annotate(total=Sum('amount')))
+    if not rows:
+        return total.quantize(Decimal('0.01'))
+    cur_ids = {r['currency_id'] for r in rows if r['currency_id']}
+    currencies = {c.id: c for c in Currency.objects.filter(id__in=cur_ids)}
+    for r in rows:
+        amt = convert_amount(r['total'], currencies.get(r['currency_id']), account.currency)
+        if r['transaction_type'] == Transaction.INCOME:
+            total += amt
+        else:
+            total -= amt
+    return total.quantize(Decimal('0.01'))
+
+
+def accounts_overview(household, include_inactive=True):
+    """Every account with its live balance, plus totals in the base currency.
+
+    Returns ``{'accounts': [{'account', 'balance'}...], 'total_base',
+    'by_type': {type_display: base_total}}``. ``total_base`` converts each
+    account's balance into the household base currency so mixed-currency
+    wallets can be summed into one headline figure.
+    """
+    base = household.base_currency
+    qs = household.accounts.select_related('currency')
+    if not include_inactive:
+        qs = qs.filter(is_active=True)
+    accounts = list(qs)
+
+    rows = []
+    total_base = Decimal('0')
+    by_type = {}
+    for acc in accounts:
+        bal = account_balance(acc)
+        rows.append({'account': acc, 'balance': bal})
+        in_base = Decimal(convert_amount(bal, acc.currency, base))
+        if acc.is_active:
+            total_base += in_base
+            label = acc.get_account_type_display()
+            by_type[label] = by_type.get(label, Decimal('0')) + in_base
+    return {
+        'accounts': rows,
+        'total_base': total_base.quantize(Decimal('0.01')),
+        'by_type': {k: v.quantize(Decimal('0.01')) for k, v in by_type.items()},
     }
 
 
@@ -1374,6 +1456,7 @@ def dashboard_summary(household, user, today=None):
         'overdue_lent': household.receivables.filter(
             status=Receivable.STATUS_ACTIVE, due_date__lt=today
         ).count(),
+        'accounts': accounts_overview(household, include_inactive=False),
     }
 
 

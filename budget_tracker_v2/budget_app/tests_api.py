@@ -15,7 +15,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
 
 from .models import (
-    AgreementItem, Alert, Category, ContributionGroup, Currency, DeviceToken,
+    Account, AgreementItem, Alert, Category, ContributionGroup, Currency, DeviceToken,
     ExchangeRate, Goal, GroupContribution, GroupMember, GroupPayout, Household,
     HouseholdInvitation, Liability, LiabilityPayment, Meeting, MoneyRequest,
     Receivable, RecurringTransaction, Transaction,
@@ -459,6 +459,62 @@ class ReadOnlyEndpointTests(APITestBase):
         self.assertEqual(self.a.get('/api/v1/calendar/?month=13').status_code, 400)
 
 
+class AccountTests(APITestBase):
+    def _make_account(self, client=None, **kw):
+        body = {'name': 'My M-Pesa', 'account_type': 'mobile_money', 'provider': 'vodacom',
+                'currency': self.usd.pk, 'opening_balance': '100.00'}
+        body.update(kw)
+        return self.ok((client or self.a).post('/api/v1/accounts/', body, format='json'), 201)
+
+    def test_create_and_opening_balance(self):
+        acc = self._make_account()
+        self.assertEqual(acc['balance'], '100.00')
+        self.assertEqual(acc['provider_display'], 'Vodacom (M-Pesa)')
+        self.assertTrue(acc['is_mobile_money'])
+
+    def test_balance_tracks_tagged_transactions(self):
+        acc = self._make_account(opening_balance='0')
+        # Income into the account, expense out of it, one untagged (ignored).
+        self.add_tx(transaction_type='income', category=self.salary.pk, amount='500', account=acc['id'])
+        self.add_tx(transaction_type='expense', amount='120', account=acc['id'])
+        self.add_tx(transaction_type='expense', amount='999')  # no account → ignored
+        data = self.ok(self.a.get('/api/v1/accounts/'))
+        row = next(a for a in data['accounts'] if a['id'] == acc['id'])
+        self.assertEqual(row['balance'], '380.00')
+        self.assertEqual(data['total_base'], '380.00')
+
+    def test_balance_converts_foreign_currency_flows(self):
+        ExchangeRate.objects.create(from_currency=self.usd, to_currency=self.tzs, rate=Decimal('2500'))
+        acc = self._make_account(currency=self.tzs.pk, opening_balance='1000')
+        # A USD 2 expense tagged to a TZS account converts to 5000 TZS out.
+        self.add_tx(transaction_type='expense', amount='2', currency=self.usd.pk, account=acc['id'])
+        row = next(a for a in self.ok(self.a.get('/api/v1/accounts/'))['accounts']
+                   if a['id'] == acc['id'])
+        self.assertEqual(row['balance'], '-4000.00')
+
+    def test_deleting_account_keeps_transactions(self):
+        acc = self._make_account()
+        tx = self.add_tx(account=acc['id'])
+        self.ok(self.a.delete(f"/api/v1/accounts/{acc['id']}/"), 204)
+        tx = self.ok(self.a.get(f"/api/v1/transactions/{tx['id']}/"))
+        self.assertIsNone(tx['account'])
+
+    def test_meta_and_dashboard_expose_accounts(self):
+        self._make_account()
+        meta = self.ok(self.a.get('/api/v1/meta/'))
+        self.assertEqual(len(meta['accounts']), 1)
+        self.assertIn('account_type', meta['choices'])
+        self.assertIn('account_provider', meta['choices'])
+        dash = self.ok(self.a.get('/api/v1/dashboard/'))
+        self.assertEqual(dash['accounts']['total_base'], '100.00')
+
+    def test_account_is_household_scoped(self):
+        eve = User.objects.create_user('eve', 'e@example.com', 'pw')
+        make_household('Other', eve)
+        acc = self._make_account()
+        self.assertEqual(api_for(eve).get(f"/api/v1/accounts/{acc['id']}/").status_code, 404)
+
+
 class WebViewRegressionTests(TestCase):
     """The web views now delegate to services; make sure each still works."""
 
@@ -476,6 +532,7 @@ class WebViewRegressionTests(TestCase):
                                    amount=Decimal('5'), category=self.groceries)
         for url in ('/', '/transactions/', '/categories/', '/budgets/', '/recurring/',
                     '/calendar/', '/rules/', '/alerts/', '/requests/', '/networth/', '/debts/',
+                    '/accounts/', '/accounts/new/',
                     '/lent/', '/goals/', '/projects/', '/currencies/', '/forecast/',
                     '/reports/', '/chat/', '/chat/recent/', '/meetings/', '/meetings/new/',
                     '/household/settings/', '/export/csv/', '/reports/2026/9/csv/'):
@@ -523,6 +580,21 @@ class WebViewRegressionTests(TestCase):
                                                 'to_currency': Currency.objects.get(code='USD').pk,
                                                 'rate': '1.1'})
         self.assertTrue(ExchangeRate.objects.exists())
+
+    def test_account_web_flow_and_balance(self):
+        usd = Currency.objects.get(code='USD')
+        self.ca.post('/accounts/new/', {
+            'name': 'My M-Pesa', 'account_type': 'mobile_money', 'provider': 'vodacom',
+            'currency': usd.pk, 'opening_balance': '50', 'icon': 'bi-wallet2',
+            'color': '#0d6efd', 'is_active': 'on'})
+        acc = Account.objects.get()
+        self.ca.post('/transactions/new/', {
+            'transaction_type': 'income', 'amount': '200', 'currency': usd.pk,
+            'account': acc.pk, 'date': '2026-09-01', 'payee': 'Work'})
+        self.assertEqual(acc.balance, Decimal('250.00'))
+        page = self.ca.get('/accounts/')
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, 'My M-Pesa')
 
 
 @override_settings(CHANNEL_LAYERS={'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'}})

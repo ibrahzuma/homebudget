@@ -61,6 +61,10 @@ urlpatterns = [
     path('requests/<int:pk>/reject/', v.MoneyRequestActionView.as_view(action='reject')),
     path('requests/<int:pk>/cancel/', v.MoneyRequestActionView.as_view(action='cancel')),
 
+    # Accounts (bank & mobile money)
+    path('accounts/', v.AccountListView.as_view()),
+    path('accounts/<int:pk>/', v.AccountDetailView.as_view()),
+
     # Net worth
     path('networth/', v.NetWorthView.as_view()),
     path('networth/snapshot/', v.NetWorthSnapshotView.as_view()),

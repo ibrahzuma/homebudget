@@ -213,6 +213,12 @@ class Transaction(models.Model):
     # Tag a transaction to a household project (e.g. "Trip to Spain", "Roof repair")
     project = models.ForeignKey('Project', on_delete=models.SET_NULL, null=True, blank=True,
                                 related_name='transactions')
+    # Which account the money moved through (bank or mobile-money wallet). Optional:
+    # a null account means the money isn't attributed to a tracked account, so it
+    # doesn't move any account balance. SET_NULL so deleting an account keeps the
+    # transactions (they just become unattributed).
+    account = models.ForeignKey('Account', on_delete=models.SET_NULL, null=True, blank=True,
+                                related_name='transactions')
 
     # Source tracking
     SOURCE_MANUAL = 'manual'
@@ -312,6 +318,10 @@ class RecurringTransaction(models.Model):
     auto_create = models.BooleanField(default=True, help_text='Automatically create transactions when due')
     is_active = models.BooleanField(default=True)
     notes = models.TextField(blank=True)
+    # The account this bill is paid from / received into. Copied onto each
+    # transaction it generates so recurring flows move the right balance.
+    account = models.ForeignKey('Account', on_delete=models.SET_NULL, null=True, blank=True,
+                                related_name='recurring_transactions')
 
     class Meta:
         ordering = ['next_due_date']
@@ -991,6 +1001,82 @@ class NetWorthSnapshot(models.Model):
 
     def __str__(self):
         return f"Snapshot {self.snapshot_date}: {self.net_worth}"
+
+
+# ============================================================
+# ACCOUNTS (bank accounts & mobile-money wallets)
+# ============================================================
+
+class Account(models.Model):
+    """A pot of money the household holds — a bank account or a mobile-money
+    wallet (Vodacom M-Pesa, Mixx by Yas, Halopesa, Airtel Money, …).
+
+    The balance is *not* stored; it is derived: ``opening_balance`` plus every
+    income transaction tagged to the account, minus every expense tagged to it
+    (``Transaction.account``). So "how much each account holds" stays true as
+    money is recorded, instead of a figure someone has to remember to update.
+    Use ``services.account_balance`` / ``services.accounts_overview`` to read it.
+    """
+    TYPE_BANK = 'bank'
+    TYPE_MOBILE = 'mobile_money'
+    TYPE_CASH = 'cash'
+    TYPE_CHOICES = [
+        (TYPE_BANK, 'Bank Account'),
+        (TYPE_MOBILE, 'Mobile Money'),
+        (TYPE_CASH, 'Cash'),
+    ]
+
+    # Mobile-money and bank providers common in Tanzania, plus a generic
+    # fallback. The value is a stable slug; the label is what people see.
+    PROVIDER_CHOICES = [
+        ('vodacom', 'Vodacom (M-Pesa)'),
+        ('yas', 'Yas (Mixx by Yas / Tigo Pesa)'),
+        ('halotel', 'Halotel (Halopesa)'),
+        ('airtel', 'Airtel (Airtel Money)'),
+        ('azampesa', 'AzamPesa'),
+        ('crdb', 'CRDB Bank'),
+        ('nmb', 'NMB Bank'),
+        ('nbc', 'NBC Bank'),
+        ('other', 'Other'),
+    ]
+    # Which providers read as mobile money (drives the default icon only).
+    MOBILE_PROVIDERS = {'vodacom', 'yas', 'halotel', 'airtel', 'azampesa'}
+
+    household = models.ForeignKey(Household, on_delete=models.CASCADE, related_name='accounts')
+    name = models.CharField(max_length=120, help_text='e.g. "My M-Pesa", "CRDB Salary"')
+    account_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=TYPE_MOBILE)
+    provider = models.CharField(max_length=30, choices=PROVIDER_CHOICES, blank=True,
+                                help_text='Network or bank, if it helps you tell accounts apart')
+    account_number = models.CharField(
+        max_length=60, blank=True,
+        help_text='Phone number or account number — store only what you are comfortable keeping')
+    currency = models.ForeignKey(Currency, on_delete=models.PROTECT, null=True, blank=True)
+    opening_balance = models.DecimalField(
+        max_digits=14, decimal_places=2, default=0,
+        help_text='What the account held before you started recording transactions here')
+    icon = models.CharField(max_length=50, default='bi-wallet2', help_text='Bootstrap icon class')
+    color = models.CharField(max_length=7, default='#0d6efd')
+    is_active = models.BooleanField(default=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-is_active', 'account_type', 'name']
+
+    def __str__(self):
+        return f"{self.name} ({self.get_account_type_display()})"
+
+    @property
+    def is_mobile_money(self):
+        return self.account_type == self.TYPE_MOBILE
+
+    @property
+    def balance(self):
+        """Current balance in the account's own currency. Convenience wrapper
+        around ``services.account_balance`` (imported lazily to avoid a cycle)."""
+        from .services import account_balance
+        return account_balance(self)
 
 
 # ============================================================

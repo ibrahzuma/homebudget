@@ -1,0 +1,31 @@
+{% extends 'budget_app/base.html' %}
+{% load humanize %}
+{% block title %}Delete Account{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card p-4">
+            <h4>Delete account</h4>
+            <p>
+                Delete <strong>{{ account.name }}</strong>
+                ({{ account.get_account_type_display }}{% if account.provider %} · {{ account.get_provider_display }}{% endif %})?
+            </p>
+            <p class="mb-2">
+                Current balance:
+                <strong>{{ account.currency.symbol|default:currency_symbol }}{{ balance|floatformat:2|intcomma }}</strong>
+            </p>
+            {% if tx_count %}
+            <div class="alert alert-info small">
+                {{ tx_count }} transaction{{ tx_count|pluralize }} {{ tx_count|pluralize:"is,are" }} tagged to this account.
+                They will be <strong>kept</strong>, but will no longer be attributed to any account.
+            </div>
+            {% endif %}
+            <form method="post">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-danger"><i class="bi bi-trash"></i> Delete</button>
+                <a href="{% url 'account_list' %}" class="btn btn-outline-secondary">Cancel</a>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

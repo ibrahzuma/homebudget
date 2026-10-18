@@ -25,6 +25,7 @@ A Django + Bootstrap personal finance app for two-person households with a sideb
 7. **Multi-Currency Support** — Add currencies, set exchange rates. All values aggregate in the household's base currency.
 8. **Data Export/Import (CSV)** — One-click CSV export of all transactions; CSV import with auto-categorization and on-the-fly category creation.
 9. **Money Requests** — One member requests money with a stated purpose; the other approves or rejects. On approval, an income transaction is recorded for the requester and an expense for the approver.
+10. **Accounts** — Bank accounts and mobile-money wallets (Vodacom M-Pesa, Mixx by Yas, Halopesa, Airtel Money, AzamPesa, …). Each account shows how much it holds: its opening balance plus every income/expense transaction tagged to it, so balances stay accurate instead of being edited by hand. At `/accounts/`.
 
 ## Stack
 - Django 4.2+ (server-side rendering)
@@ -61,6 +62,7 @@ Open http://127.0.0.1:8000/
 | `/` | Dashboard |
 | `/forecast/` | End-of-month forecast |
 | `/networth/` | Net worth tracker |
+| `/accounts/` | Bank & mobile-money account balances |
 | `/transactions/` | Transaction list with filters |
 | `/recurring/` | Recurring transactions |
 | `/calendar/` | Bill calendar |

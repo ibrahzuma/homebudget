@@ -40,8 +40,8 @@ process as the web UI (`budget_tracker_v2/budget_app/api/`).
 | DELETE | `household/members/<user_id>/` | Can't remove yourself |
 | POST | `household/invites/` | `{note?}` → invitation (`code`, `path`) |
 | POST | `household/invites/<id>/revoke/` | |
-| GET | `dashboard/` | Month totals, per-member split, budgets, recent, upcoming recurring, forecast, net worth, pending approvals, goals, next meeting, lent/owed |
-| GET / POST | `transactions/` | Filters: `type`, `member`, `category`, `project`, `uncategorized=1`, `date_from`, `date_to`, `q`, `page`, `page_size` (≤200). Returns `{count, page, page_size, has_next, results, totals{income,expense}}` |
+| GET | `dashboard/` | Month totals, per-member split, budgets, recent, upcoming recurring, forecast, net worth, pending approvals, goals, next meeting, lent/owed, `accounts` (overview) |
+| GET / POST | `transactions/` | Filters: `type`, `member`, `category`, `project`, `account`, `uncategorized=1`, `date_from`, `date_to`, `q`, `page`, `page_size` (≤200). Returns `{count, page, page_size, has_next, results, totals{income,expense}}`. POST accepts an optional `account` |
 | GET / PATCH / DELETE | `transactions/<id>/` | |
 | GET | `transactions/export/` | CSV |
 | POST | `transactions/import/` | multipart `file` (≤5 MB) → `{created, errors[]}` |
@@ -49,7 +49,7 @@ process as the web UI (`budget_tracker_v2/budget_app/api/`).
 | PATCH / DELETE | `categories/<id>/` | |
 | GET / POST | `budgets/` | `{category, monthly_limit, month}` (month is normalised to the 1st). Rows include `spent`, `pct`, `over` for the current month |
 | GET / PATCH / DELETE | `budgets/<id>/` | |
-| GET / POST | `recurring/` | `next_due_date` defaults to `start_date` |
+| GET / POST | `recurring/` | `next_due_date` defaults to `start_date`. Optional `account` is copied onto each transaction it generates |
 | GET / PATCH / DELETE | `recurring/<id>/` | |
 | POST | `recurring/run-now/` | Applies everything due → `{created, transactions[]}` |
 | GET | `calendar/?year=&month=` | Mon–Sun weeks of projected recurring income/expense |
@@ -62,6 +62,8 @@ process as the web UI (`budget_tracker_v2/budget_app/api/`).
 | GET / POST | `requests/` | GET → `{incoming[], outgoing[]}`. POST `{approver, amount, currency?, purpose, category?, notes?}` (needs 2+ members) |
 | GET | `requests/<id>/` | Includes `can_respond`, `can_cancel` |
 | POST | `requests/<id>/approve/` · `reject/` · `cancel/` | `{note?}`. Approve records one expense for the requester |
+| GET / POST | `accounts/` | GET → `{accounts[], total_base, by_type}`. Each account carries its live `balance`. POST `{name, account_type, provider?, account_number?, currency?, opening_balance?, icon?, color?, is_active?, notes?}` (currency defaults to base, `is_active` defaults to true) |
+| GET / PATCH / DELETE | `accounts/<id>/` | Deleting an account keeps its transactions (they become unattributed) |
 | GET | `networth/` | Totals, by-type breakdowns, `assets[]`, `liabilities[]`, last 24 `snapshots[]` |
 | POST | `networth/snapshot/` | Saves today's snapshot |
 | GET / POST | `assets/` · GET / PATCH / DELETE `assets/<id>/` | Currency defaults to base |
@@ -93,6 +95,20 @@ process as the web UI (`budget_tracker_v2/budget_app/api/`).
 | POST | `meetings/<id>/items/` | Agreement item |
 | PATCH / DELETE | `meetings/<id>/items/<iid>/` | |
 | POST | `meetings/<id>/items/<iid>/quick/` | `{status?, progress?}` |
+
+## Accounts (bank & mobile money)
+
+A household's pots of money — bank accounts and mobile-money wallets (Vodacom
+M-Pesa, Mixx by Yas, Halopesa, Airtel Money, AzamPesa, …). A balance is **not
+stored**: it is derived as `opening_balance` + income tagged to the account −
+expenses tagged to it, so `GET accounts/` always returns the true figure. Tag a
+transaction (or a recurring entry) to an account via its `account` field; a
+transaction with no account doesn't move any balance. Linked transactions in
+another currency are converted into the account's currency at the saved rate,
+and `total_base` sums every account into the household base currency. Deleting
+an account keeps its transactions — they simply become unattributed.
+`meta/` lists active `accounts[]` plus the `account_type` and `account_provider`
+choices for pickers.
 
 ## Contribution groups (vikoba & mchezo)
 

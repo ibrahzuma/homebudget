@@ -138,6 +138,41 @@
     </div>
 </div>
 
+{% if accounts.accounts %}
+<!-- Accounts: how much each bank / mobile-money account holds -->
+<div class="card p-4 mb-4">
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+        <div>
+            <h5 class="mb-1"><i class="bi bi-wallet2 text-primary"></i> Accounts</h5>
+            <small class="text-muted">Balance held in each bank &amp; mobile-money account</small>
+        </div>
+        <div class="text-end">
+            <div class="fw-bold">{{ currency_symbol }}{{ accounts.total_base|floatformat:2|intcomma }}</div>
+            <a href="{% url 'account_list' %}" class="small text-decoration-none">Manage &rarr;</a>
+        </div>
+    </div>
+    <div class="row g-3">
+        {% for row in accounts.accounts %}
+        <div class="col-md-4 col-sm-6">
+            <a href="{% url 'transaction_list' %}?account={{ row.account.pk }}" class="text-decoration-none">
+                <div class="d-flex align-items-center p-2 rounded" style="background: {{ row.account.color }}0d;">
+                    <div class="stat-icon me-2" style="background: {{ row.account.color }}1a; color: {{ row.account.color }};">
+                        <i class="bi {{ row.account.icon|default:'bi-wallet2' }}"></i>
+                    </div>
+                    <div class="flex-grow-1">
+                        <div class="small text-muted text-truncate">{{ row.account.name }}</div>
+                        <div class="fw-bold {% if row.balance < 0 %}text-danger{% else %}text-dark{% endif %}">
+                            {{ row.account.currency.symbol|default:currency_symbol }}{{ row.balance|floatformat:2|intcomma }}
+                        </div>
+                    </div>
+                </div>
+            </a>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
 <!-- Forecast card -->
 <div class="card p-4 mb-4">
     <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">

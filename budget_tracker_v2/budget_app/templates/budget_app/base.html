@@ -457,6 +457,9 @@
         <a href="{% url 'monthly_report' %}" class="sidebar-link {% if 'report' in request.resolver_match.url_name %}active{% endif %}">
             <i class="bi bi-file-earmark-text"></i> Monthly Report
         </a>
+        <a href="{% url 'account_list' %}" class="sidebar-link {% if 'account' in request.resolver_match.url_name %}active{% endif %}">
+            <i class="bi bi-wallet2"></i> Accounts
+        </a>
         <a href="{% url 'networth' %}" class="sidebar-link {% if request.resolver_match.url_name == 'networth' %}active{% endif %}">
             <i class="bi bi-bank"></i> Net Worth
         </a>

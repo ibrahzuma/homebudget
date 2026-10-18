@@ -52,6 +52,13 @@ def project_brief(p):
     return {'id': p.id, 'name': p.name, 'color': p.color, 'icon': p.icon}
 
 
+def account_brief(a):
+    if a is None:
+        return None
+    return {'id': a.id, 'name': a.name, 'account_type': a.account_type,
+            'provider': a.provider, 'color': a.color, 'icon': a.icon}
+
+
 def household(h, include_members=True):
     data = {
         'id': h.id,
@@ -97,6 +104,7 @@ def transaction(t):
         'user': user_brief(t.user),
         'category': category_brief(t.category),
         'project': project_brief(t.project),
+        'account': account_brief(t.account),
     }
 
 
@@ -134,6 +142,7 @@ def recurring(r):
         'is_active': r.is_active,
         'notes': r.notes,
         'user': user_brief(r.user),
+        'account': account_brief(r.account),
     }
 
 
@@ -199,6 +208,42 @@ def asset(a):
         'registration_number': a.registration_number,
         'notes': a.notes,
         'updated_at': dt(a.updated_at),
+    }
+
+
+def account(a, balance=None):
+    """One account. ``balance`` (the live figure from
+    ``services.account_balance``) is passed in to avoid recomputing it."""
+    if balance is None:
+        from ..services import account_balance
+        balance = account_balance(a)
+    return {
+        'id': a.id,
+        'name': a.name,
+        'account_type': a.account_type,
+        'account_type_display': a.get_account_type_display(),
+        'provider': a.provider,
+        'provider_display': a.get_provider_display() if a.provider else '',
+        'is_mobile_money': a.is_mobile_money,
+        'account_number': a.account_number,
+        'currency': currency(a.currency),
+        'opening_balance': money(a.opening_balance),
+        'balance': money(balance),
+        'icon': a.icon,
+        'color': a.color,
+        'is_active': a.is_active,
+        'notes': a.notes,
+        'updated_at': dt(a.updated_at),
+    }
+
+
+def accounts_overview(data):
+    """The payload for GET /accounts/: each account with its balance, plus
+    base-currency totals. ``data`` is ``services.accounts_overview(...)``."""
+    return {
+        'accounts': [account(r['account'], balance=r['balance']) for r in data['accounts']],
+        'total_base': money(data['total_base']),
+        'by_type': {k: money(v) for k, v in data['by_type'].items()},
     }
 
 
@@ -454,6 +499,7 @@ def dashboard(d, viewer):
         'total_lent_out': money(d['total_lent_out']),
         'total_owed': money(d['total_owed']),
         'overdue_lent': d['overdue_lent'],
+        'accounts': accounts_overview(d['accounts']),
     }
 
 

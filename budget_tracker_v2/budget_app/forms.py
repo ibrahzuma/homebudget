@@ -6,7 +6,7 @@ from .models import (
     Transaction, Category, Budget, Household, RecurringTransaction,
     CategoryRule, Asset, Liability, LiabilityPayment, MoneyRequest, Currency,
     Meeting, AgreementItem, Goal, GoalContribution, Project,
-    Receivable, ReceivablePayment,
+    Receivable, ReceivablePayment, Account,
     ContributionGroup, GroupMember, GroupContribution, GroupPayout,
 )
 
@@ -50,7 +50,7 @@ class TransactionForm(BootstrapMixin, forms.ModelForm):
     class Meta:
         model = Transaction
         fields = ('transaction_type', 'category', 'amount', 'currency',
-                  'payee', 'description', 'date', 'project')
+                  'account', 'payee', 'description', 'date', 'project')
         widgets = {
             'date': forms.DateInput(attrs={'type': 'date'}),
             'description': forms.TextInput(attrs={'placeholder': 'Optional notes'}),
@@ -61,6 +61,10 @@ class TransactionForm(BootstrapMixin, forms.ModelForm):
         super().__init__(*args, **kwargs)
         if household:
             self.fields['category'].queryset = Category.objects.filter(household=household)
+            self.fields['account'].queryset = Account.objects.filter(
+                household=household, is_active=True)
+            self.fields['account'].required = False
+            self.fields['account'].empty_label = '— Not tracked —'
             self.fields['project'].queryset = Project.objects.filter(
                 household=household
             ).exclude(status__in=[Project.STATUS_COMPLETED, Project.STATUS_CANCELLED])
@@ -98,7 +102,7 @@ class RecurringTransactionForm(BootstrapMixin, forms.ModelForm):
     class Meta:
         model = RecurringTransaction
         fields = ('name', 'transaction_type', 'category', 'amount', 'currency',
-                  'payee', 'frequency', 'start_date', 'next_due_date', 'end_date',
+                  'account', 'payee', 'frequency', 'start_date', 'next_due_date', 'end_date',
                   'auto_create', 'is_active', 'notes')
         widgets = {
             'start_date': forms.DateInput(attrs={'type': 'date'}),
@@ -111,6 +115,10 @@ class RecurringTransactionForm(BootstrapMixin, forms.ModelForm):
         super().__init__(*args, **kwargs)
         if household:
             self.fields['category'].queryset = Category.objects.filter(household=household)
+            self.fields['account'].queryset = Account.objects.filter(
+                household=household, is_active=True)
+            self.fields['account'].required = False
+            self.fields['account'].empty_label = '— Not tracked —'
             if household.base_currency:
                 self.fields['currency'].initial = household.base_currency
 
@@ -142,6 +150,38 @@ class AssetForm(BootstrapMixin, forms.ModelForm):
             'size': forms.TextInput(attrs={'placeholder': 'e.g. 120 m², 0.5 acre, 3 bed / 2 bath'}),
             'registration_number': forms.TextInput(attrs={'placeholder': 'Title deed / plate / license #'}),
         }
+
+
+class AccountForm(BootstrapMixin, forms.ModelForm):
+    class Meta:
+        model = Account
+        fields = ('name', 'account_type', 'provider', 'account_number',
+                  'currency', 'opening_balance', 'icon', 'color', 'is_active', 'notes')
+        widgets = {
+            'name': forms.TextInput(attrs={'placeholder': 'e.g. My M-Pesa, CRDB Salary'}),
+            'account_number': forms.TextInput(attrs={'placeholder': 'Phone or account number (optional)'}),
+            'icon': forms.TextInput(attrs={'placeholder': 'bi-wallet2'}),
+            'color': forms.TextInput(attrs={'type': 'color'}),
+            'notes': forms.Textarea(attrs={'rows': 2}),
+        }
+        help_texts = {
+            'opening_balance': 'Balance before you started tracking transactions here. '
+                               'Income and expenses tagged to this account adjust it automatically.',
+        }
+
+    def __init__(self, *args, household=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Icon and colour have model defaults, so let clients omit them.
+        self.fields['icon'].required = False
+        self.fields['color'].required = False
+        if household and household.base_currency and not self.initial.get('currency'):
+            self.fields['currency'].initial = household.base_currency
+
+    def clean_icon(self):
+        return self.cleaned_data.get('icon') or 'bi-wallet2'
+
+    def clean_color(self):
+        return self.cleaned_data.get('color') or '#0d6efd'
 
 
 class LiabilityForm(BootstrapMixin, forms.ModelForm):

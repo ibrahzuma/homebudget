@@ -71,6 +71,12 @@ urlpatterns = [
     path('requests/new/', views.request_create, name='request_create'),
     path('requests/<int:pk>/', views.request_detail, name='request_detail'),
 
+    # Accounts (bank & mobile money)
+    path('accounts/', views.account_list, name='account_list'),
+    path('accounts/new/', views.account_create, name='account_create'),
+    path('accounts/<int:pk>/edit/', views.account_edit, name='account_edit'),
+    path('accounts/<int:pk>/delete/', views.account_delete, name='account_delete'),
+
     # Net worth
     path('networth/', views.networth_view, name='networth'),
     path('networth/snapshot/', views.networth_snapshot, name='networth_snapshot'),

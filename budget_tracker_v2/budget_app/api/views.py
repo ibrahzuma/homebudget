@@ -23,7 +23,7 @@ from rest_framework.views import APIView
 
 from .. import services
 from ..forms import (
-    AgreementItemForm, AssetForm, BudgetForm, CategoryForm, CategoryRuleForm,
+    AgreementItemForm, AssetForm, AccountForm, BudgetForm, CategoryForm, CategoryRuleForm,
     CurrencyForm, ExchangeRateForm, GoalContributionForm, GoalForm, HouseholdForm,
     LiabilityForm, LiabilityPaymentForm, MeetingForm, MoneyRequestForm,
     ProjectForm, ReceivableForm, ReceivablePaymentForm, RecurringTransactionForm,
@@ -32,7 +32,7 @@ from ..forms import (
     GroupPayoutForm, GroupLoanForm,
 )
 from ..models import (
-    AgreementItem, Alert, Asset, Budget, Category, CategoryRule,
+    AgreementItem, Alert, Asset, Account, Budget, Category, CategoryRule,
     ContributionGroup, Currency, DeviceToken, ExchangeRate, Goal, GoalContribution,
     GroupMember, HouseholdInvitation, Liability,
     LiabilityPayment, Meeting, MoneyRequest, Project, Receivable,
@@ -211,6 +211,7 @@ class MetaView(HouseholdAPIView):
             'members': [s.user_brief(u) for u in h.members.order_by('username')],
             'projects': [s.project_brief(p) for p in h.projects.exclude(
                 status__in=[Project.STATUS_COMPLETED, Project.STATUS_CANCELLED])],
+            'accounts': [s.account_brief(a) for a in h.accounts.filter(is_active=True)],
             'choices': {
                 'transaction_type': choices(Transaction.TYPE_CHOICES),
                 'transaction_source': choices(Transaction.SOURCE_CHOICES),
@@ -219,6 +220,8 @@ class MetaView(HouseholdAPIView):
                 'alert_level': choices(Alert.LEVEL_CHOICES),
                 'request_status': choices(MoneyRequest.STATUS_CHOICES),
                 'asset_type': choices(Asset.TYPE_CHOICES),
+                'account_type': choices(Account.TYPE_CHOICES),
+                'account_provider': choices(Account.PROVIDER_CHOICES),
                 'liability_type': choices(Liability.TYPE_CHOICES),
                 'goal_status': choices(Goal.STATUS_CHOICES),
                 'project_status': choices(Project.STATUS_CHOICES),
@@ -434,12 +437,12 @@ class TransactionListView(CrudListView):
     serialize = staticmethod(s.transaction)
 
     def get_queryset(self):
-        qs = self.household.transactions.select_related('user', 'category', 'currency', 'project')
+        qs = self.household.transactions.select_related('user', 'category', 'currency', 'project', 'account')
         p = self.request.query_params
         if p.get('type') in (Transaction.INCOME, Transaction.EXPENSE):
             qs = qs.filter(transaction_type=p['type'])
         for param, field in (('member', 'user_id'), ('category', 'category_id'),
-                             ('project', 'project_id')):
+                             ('project', 'project_id'), ('account', 'account_id')):
             if p.get(param):
                 qs = qs.filter(**{field: p[param]})
         if p.get('uncategorized') in ('1', 'true'):
@@ -642,7 +645,7 @@ class RecurringListView(CrudListView):
     serialize = staticmethod(s.recurring)
 
     def get_queryset(self):
-        return self.household.recurring_transactions.select_related('category', 'currency', 'user')
+        return self.household.recurring_transactions.select_related('category', 'currency', 'user', 'account')
 
     def post(self, request):
         data = _data(request)
@@ -826,6 +829,35 @@ class AssetDetailView(CrudDetailView):
     form_class = AssetForm
     serialize = staticmethod(s.asset)
     pass_household_to_form = False
+
+
+# ============================================================
+# ACCOUNTS (bank & mobile-money balances)
+# ============================================================
+
+class AccountListView(_DefaultCurrencyMixin, CrudListView):
+    model = Account
+    form_class = AccountForm
+    serialize = staticmethod(s.account)
+
+    def get(self, request):
+        return Response(s.accounts_overview(services.accounts_overview(self.household)))
+
+    def post(self, request):
+        # A bound form reads a missing BooleanField as False, so an API client
+        # that omits is_active would create an inactive account. Default it on,
+        # matching the pre-ticked checkbox on the web form.
+        data = _data(request)
+        data['is_active'] = _flag(request, 'is_active', True)
+        form = validated_form(self.form_class, data, household=self.household)
+        obj = self.perform_create(form)
+        return created(type(self).serialize(self.get_queryset().get(pk=obj.pk)))
+
+
+class AccountDetailView(CrudDetailView):
+    model = Account
+    form_class = AccountForm
+    serialize = staticmethod(s.account)
 
 
 # ============================================================
