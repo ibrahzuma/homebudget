@@ -9,19 +9,56 @@
             <h5 class="mb-3">Members</h5>
             <ul class="list-group list-group-flush">
                 {% for member in household.members.all %}
-                <li class="list-group-item d-flex justify-content-between align-items-center px-0">
-                    <span><i class="bi bi-person-circle me-2"></i> <strong>{{ member.username }}</strong>
-                        {% if member == user %}<span class="badge bg-secondary ms-2">You</span>{% endif %}
-                    </span>
+                <li class="list-group-item px-0">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span><i class="bi bi-person-circle me-2"></i> <strong>{{ member.username }}</strong>
+                            {% if member == user %}<span class="badge bg-secondary ms-2">You</span>{% endif %}
+                        </span>
+                        {% if member != user %}
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-outline-secondary" type="button"
+                                    data-bs-toggle="collapse" data-bs-target="#reset-{{ member.id }}">
+                                <i class="bi bi-key"></i> Reset password
+                            </button>
+                            <form method="post" class="d-inline">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="remove_member">
+                                <input type="hidden" name="user_id" value="{{ member.id }}">
+                                <button class="btn btn-sm btn-outline-danger" onclick="return confirm('Remove this member?')">
+                                    <i class="bi bi-x"></i> Remove
+                                </button>
+                            </form>
+                        </div>
+                        {% endif %}
+                    </div>
                     {% if member != user %}
-                    <form method="post" class="d-inline">
-                        {% csrf_token %}
-                        <input type="hidden" name="action" value="remove_member">
-                        <input type="hidden" name="user_id" value="{{ member.id }}">
-                        <button class="btn btn-sm btn-outline-danger" onclick="return confirm('Remove this member?')">
-                            <i class="bi bi-x"></i> Remove
-                        </button>
-                    </form>
+                    <div class="collapse mt-3" id="reset-{{ member.id }}">
+                        <form method="post" class="border-top pt-3">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="reset_password">
+                            <input type="hidden" name="user_id" value="{{ member.id }}">
+                            <p class="text-muted small mb-2">
+                                Set a new login password for <strong>{{ member.username }}</strong>.
+                                They'll need it the next time they sign in.
+                            </p>
+                            <div class="row g-2">
+                                <div class="col-sm">
+                                    <input type="password" name="new_password1" class="form-control form-control-sm"
+                                           placeholder="New password" autocomplete="new-password" required>
+                                </div>
+                                <div class="col-sm">
+                                    <input type="password" name="new_password2" class="form-control form-control-sm"
+                                           placeholder="Confirm password" autocomplete="new-password" required>
+                                </div>
+                                <div class="col-sm-auto">
+                                    <button class="btn btn-sm btn-primary w-100"
+                                            onclick="return confirm('Reset {{ member.username }}\'s password?')">
+                                        <i class="bi bi-key"></i> Set password
+                                    </button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
                     {% endif %}
                 </li>
                 {% endfor %}

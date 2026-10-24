@@ -13,7 +13,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from .forms import (
-    SignUpForm, HouseholdForm, TransactionForm, CategoryForm, BudgetForm,
+    SignUpForm, MemberPasswordResetForm, HouseholdForm, TransactionForm, CategoryForm, BudgetForm,
     RecurringTransactionForm, CategoryRuleForm, AssetForm, AccountForm, LiabilityForm,
     LiabilityPaymentForm,
     MoneyRequestForm, MoneyRequestResponseForm, CSVImportForm,
@@ -39,7 +39,7 @@ from .services import (
     month_range,
     # Shared with the JSON API (budget_app/api/)
     seed_household_defaults, ensure_default_currencies, add_member_to_household,
-    accept_invitation, notify_money_request_created, approve_money_request,
+    accept_invitation, reset_member_password, notify_money_request_created, approve_money_request,
     reject_money_request, cancel_money_request, record_liability_payment,
     delete_liability_payment, record_goal_contribution, delete_goal_contribution,
     create_receivable, record_receivable_payment, delete_receivable_payment,
@@ -187,6 +187,23 @@ def household_settings(request):
             else:
                 household.members.remove(user)
                 messages.success(request, f"{user.username} removed.")
+        elif action == 'reset_password':
+            target = get_object_or_404(User, pk=request.POST.get('user_id'))
+            if target == request.user:
+                messages.error(request, "Change your own password from your account settings.")
+            elif not household.members.filter(pk=target.pk).exists():
+                messages.error(request, "That user isn't a member of this household.")
+            else:
+                form = MemberPasswordResetForm(target, request.POST)
+                if form.is_valid():
+                    level, msg = reset_member_password(
+                        household, target, form.cleaned_data['new_password1'],
+                        acting_user=request.user,
+                    )
+                    getattr(messages, level)(request, msg)
+                else:
+                    errors = ' '.join(e for errs in form.errors.values() for e in errs)
+                    messages.error(request, errors or "Could not reset the password.")
         elif action == 'create_invite':
             invite = HouseholdInvitation.objects.create(
                 household=household,

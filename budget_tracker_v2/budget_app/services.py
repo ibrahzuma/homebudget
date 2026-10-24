@@ -616,6 +616,30 @@ def add_member_to_household(household, user):
     return 'success', f"{user.username} added to {household.name}."
 
 
+def reset_member_password(household, target_user, new_password, acting_user=None):
+    """Set ``target_user``'s login password on behalf of a household peer.
+
+    Shared by the web settings page and the API so one member can reset their
+    partner's password. The caller must have already confirmed ``target_user``
+    belongs to ``household`` and is not ``acting_user``; password strength is
+    validated by ``MemberPasswordResetForm`` before this runs. Writes a
+    warning-level Alert addressed to ``target_user`` so they learn their
+    password changed and who changed it. Returns a ``(level, message)`` pair for
+    ``messages.<level>``.
+    """
+    target_user.set_password(new_password)
+    target_user.save(update_fields=['password'])
+    who = acting_user.username if acting_user else 'a household member'
+    Alert.objects.create(
+        household=household, user=target_user,
+        title='Password reset',
+        message=f"Your login password was reset by {who}. "
+                f"Use the new password next time you sign in.",
+        level=Alert.LEVEL_WARNING, link_url='/household/settings/',
+    )
+    return 'success', f"{target_user.username}'s password was reset."
+
+
 def accept_invitation(invite, user):
     """Join ``user`` to the invite's household, burn the link, tell the sender."""
     level, msg = add_member_to_household(invite.household, user)

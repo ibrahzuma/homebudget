@@ -1,5 +1,5 @@
 from django import forms
-from django.contrib.auth.forms import UserCreationForm
+from django.contrib.auth.forms import UserCreationForm, SetPasswordForm
 from django.contrib.auth.models import User
 
 from .models import (
@@ -33,6 +33,18 @@ class SignUpForm(BootstrapMixin, UserCreationForm):
     class Meta:
         model = User
         fields = ('username', 'email', 'password1', 'password2')
+
+
+class MemberPasswordResetForm(BootstrapMixin, SetPasswordForm):
+    """Set a new login password for another household member.
+
+    Reuses Django's ``SetPasswordForm`` so the configured password validators
+    and the new_password1/new_password2 match check apply, same as signup.
+    The target user is passed positionally (``SetPasswordForm(user, data)``);
+    no current-password entry is required, as a household peer is doing the
+    reset, not the account owner.
+    """
+    pass
 
 
 class HouseholdForm(BootstrapMixin, forms.ModelForm):
